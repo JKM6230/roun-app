@@ -11,7 +11,7 @@ sheet_id = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 gid_students = "0"            # 원생명단
 gid_notice = "1622401395"     # 공지사항
 gid_guide = "1774705614"      # 기질가이드
-gid_attendance = "244532436"  # 출석부 (기록용 X, 조회용)
+gid_attendance = "244532436"  # 출석부
 
 # ==========================================
 # 1. 데이터 로드 엔진
@@ -22,7 +22,10 @@ st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="�
 def load_data(gid):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     try:
-        return pd.read_csv(url, dtype=str)
+        df = pd.read_csv(url, dtype=str)
+        # 엑셀 제목의 공백 제거 (오류 방지)
+        df.columns = df.columns.str.strip()
+        return df
     except:
         return pd.DataFrame()
 
@@ -35,7 +38,7 @@ df_guide = load_data(gid_guide)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 7.0 (Final)**")
+    st.markdown("**System Ver 8.0 (Birthday Fix)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -50,7 +53,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.caption(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
-    if st.button("🔄 새로고침 (초기화)"):
+    if st.button("🔄 새로고침"):
         st.cache_data.clear()
         st.rerun()
 
@@ -67,7 +70,7 @@ if menu == "🏠 홈 대시보드":
             latest = df_notice.iloc[-1]
             st.info(f"**[공지 | {latest[0]}]**\n\n{latest[1]}")
         except:
-            st.warning("공지사항 데이터 형식 확인 필요")
+            st.info("등록된 공지사항이 없습니다.")
     else:
         st.info("등록된 공지사항이 없습니다.")
 
@@ -85,19 +88,17 @@ if menu == "🏠 홈 대시보드":
                 st.write(f" - **{row['이름']}** (현재: {level})")
         else:
             st.success("✅ 오늘 예정된 심사는 없습니다.")
-    
+
     c1, c2 = st.columns(2)
     c1.warning("🌧️ [제주 날씨] 습도 높음! 안전 운행")
-    c2.info("💡 차량 운행 시 창문 닫기 & 안전벨트 확인")
+    c2.info("💡 차량 운행 시 창문 닫기")
 
 # [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
-    # 1. 운행 모드
     mode = st.radio("운행 모드", ["등원 (집 → 도장)", "하원 (도장 → 집)"], horizontal=True)
     
-    # 2. 컬럼 설정
     if "등원" in mode:
         veh_col = '등원차량'
         time_col = '등원시간'
@@ -106,47 +107,40 @@ elif menu == "🚍 차량 운행표":
         veh_col = '하원차량'
         time_col = '하원시간'
         loc_col = '하원장소'
-        
-    # 3. 데이터 필터링
-    if not df_students.empty and veh_col in df_students.columns:
-        
-        # (1) 차량 배정된 아이들만
-        target = df_students[df_students[veh_col].notna() & (df_students[veh_col] != '')]
-        
-        # (2) 이용여부 체크 ('O', '이용' 포함된 경우만)
-        if '차량이용여부' in df_students.columns:
-             target = target[target['차량이용여부'].fillna('').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
 
-        # 4. 차량 선택
-        if not target.empty:
-            # 차량 목록 정렬 (1호차, 2호차...)
-            car_list = sorted(target[veh_col].unique().tolist())
-            selected_car = st.selectbox("배차 선택", car_list)
+    if not df_students.empty:
+        if veh_col in df_students.columns:
+            target = df_students[df_students[veh_col].notna() & (df_students[veh_col] != '')]
             
-            # 5. 최종 리스트 및 시간 정렬
-            final_df = target[target[veh_col] == selected_car]
+            if '차량이용여부' in df_students.columns:
+                target = target[target['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
             
-            if time_col in final_df.columns:
-                final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
-            
-            st.write(f"### 🕒 {selected_car} {mode} ({len(final_df)}명)")
-            
-            # 6. 표 출력
-            cols_to_show = [time_col, '이름', loc_col, '수련부']
-            cols_to_show = [c for c in cols_to_show if c in final_df.columns]
-            
-            # 체크박스를 위해 반복문 사용
-            for i, row in final_df.iterrows():
-                c1, c2, c3, c4 = st.columns([2, 2, 3, 1])
-                c1.write(f"**{row[time_col]}**")
-                c2.write(f"**{row['이름']}**")
-                c3.write(f"{row[loc_col]}")
-                c4.checkbox("탑승", key=f"car_{i}")
+            if not target.empty:
+                car_list = sorted(target[veh_col].unique().tolist())
+                selected_car = st.selectbox("배차 선택", car_list)
                 
+                final_df = target[target[veh_col] == selected_car]
+                
+                if time_col in final_df.columns:
+                    final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
+                
+                st.write(f"### 🕒 {selected_car} {mode} ({len(final_df)}명)")
+                
+                for i, row in final_df.iterrows():
+                    c1, c2, c3, c4 = st.columns([2, 2, 3, 1])
+                    t_val = row[time_col] if time_col in row else "-"
+                    l_val = row[loc_col] if loc_col in row else "-"
+                    
+                    c1.write(f"**{t_val}**")
+                    c2.write(f"**{row['이름']}**")
+                    c3.write(f"{l_val}")
+                    c4.checkbox("확인", key=f"c_{i}")
+            else:
+                st.info(f"조건에 맞는 탑승 인원이 없습니다.")
         else:
-            st.info(f"운행 데이터가 없습니다. (엑셀 '{veh_col}' 확인)")
+            st.error(f"🚨 엑셀에 **'{veh_col}'** 이라는 제목이 없습니다.")
     else:
-        st.error(f"엑셀에 '{veh_col}' 컬럼이 없습니다.")
+        st.error("데이터를 불러오지 못했습니다.")
 
 # [3] 수련부 출석
 elif menu == "📝 수련부 출석":
@@ -203,29 +197,51 @@ elif menu == "📈 승급심사 관리":
         if not df_test.empty:
             df_test = df_test.sort_values(by='심사일시')
             level_col = '단' if '단' in df_students.columns else '현재급'
-            cols_to_show = ['심사일시', '이름', level_col, '수련부']
-            cols_to_show = [c for c in cols_to_show if c in df_test.columns]
-            st.dataframe(df_test[cols_to_show], use_container_width=True, hide_index=True)
+            
+            cols = ['심사일시', '이름', level_col, '수련부']
+            real_cols = [c for c in cols if c in df_test.columns]
+            
+            st.dataframe(df_test[real_cols], use_container_width=True, hide_index=True)
         else:
             st.info("예정된 심사자가 없습니다.")
 
-# [7] 이달의 생일
+# [7] 이달의 생일 (강력한 인식 기능 탑재)
 elif menu == "🎂 이달의 생일":
     st.header("🎂 이달의 생일자")
     this_month = datetime.now().month
     st.subheader(f"{this_month}월의 주인공 🎉")
     
+    # 1. 컬럼 찾기
     birth_col = '생일' if '생일' in df_students.columns else '생년월일'
+    
     if not df_students.empty and birth_col in df_students.columns:
-        df_students['temp_date'] = pd.to_datetime(df_students[birth_col], format='%Y%m%d', errors='coerce')
-        if df_students['temp_date'].isna().all():
-             df_students['temp_date'] = pd.to_datetime(df_students[birth_col], errors='coerce')
         
+        # 2. [스마트 클리닝] 숫자만 남기기 (2018-06-14, 2018.06.14 -> 20180614)
+        # 이렇게 하면 어떤 형식으로 적어도 다 8자리 숫자로 통일됩니다.
+        df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
+        
+        # 3. 날짜 변환 (YYYYMMDD 형식)
+        df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
+        
+        # 4. 이번 달 생일자 필터링
         b_kids = df_students[df_students['temp_date'].dt.month == this_month]
+        
         if not b_kids.empty:
             st.balloons()
             for i, row in b_kids.iterrows():
-                date_str = row['temp_date'].strftime('%m월 %d일') if pd.notnull(row['temp_date']) else str(row[birth_col])
-                st.info(f"🎂 {row['이름']} ({date_str})")
+                # 날짜 예쁘게 포맷팅
+                if pd.notnull(row['temp_date']):
+                    date_str = row['temp_date'].strftime('%m월 %d일')
+                else:
+                    date_str = str(row[birth_col])
+                
+                # 수련부 정보 추가
+                info_txt = f"🎂 **{row['이름']}** ({date_str})"
+                if '수련부' in row:
+                    info_txt += f" - {row['수련부']}"
+                
+                st.info(info_txt)
         else:
-            st.write("생일자가 없습니다.")
+            st.write(f"이번 달({this_month}월)에는 생일인 친구가 없습니다.")
+    else:
+        st.error(f"엑셀에 '{birth_col}' 컬럼이 없습니다.")
