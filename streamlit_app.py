@@ -59,7 +59,7 @@ def load_slow_data(sheet_name):
     except:
         return pd.DataFrame()
 
-# [핵심] 데이터 쓰기 함수 (연동 로직 포함)
+# [핵심] 데이터 쓰기 함수 (연동 로직)
 def update_check_status(student_name, col_name, status_value):
     client = get_gspread_client()
     if not client: return
@@ -117,7 +117,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 37.0 (Button Added)**")
+    st.markdown("**System Ver 38.0 (Final Fix)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -280,45 +280,57 @@ elif menu == "🚍 차량 운행표":
             for i, row in final_df.iterrows():
                 current_status = row.get(check_col, '')
                 
-                # 색상 박스 로직 (단순화)
+                # 색상 박스 로직
                 if current_status == '탑승':
-                    with st.success(f"✅ 탑승 완료"):
-                        c1, c2, c3 = st.columns([3, 1, 1])
-                        c1.markdown(f"#### {row['이름']}")
-                        c1.caption(f"{row[loc_col]}")
-                        if c2.button("✅ 완료", key=f"btn_b_{i}"):
-                            update_check_status(row['이름'], check_col, '')
-                            st.rerun()
-                        # 결석 버튼은 숨김 (이미 탑승했으므로)
+                    box = st.success
                 elif current_status == '결석':
-                    with st.error(f"❌ 결석"):
-                        c1, c2, c3 = st.columns([3, 1, 1])
-                        c1.markdown(f"#### {row['이름']}")
-                        c1.caption(f"결석 처리됨")
-                        if c3.button("❌ 완료", key=f"btn_a_{i}"):
-                            update_check_status(row['이름'], check_col, '')
-                            st.rerun()
+                    box = st.error
+                else:
+                    box = None
+                
+                def draw_content():
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    t_val = row[time_col] if time_col in row else "-"
+                    l_val = row[loc_col] if loc_col in row else "-"
+                    with c1:
+                        st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
+                        st.markdown(f"📍 {l_val}")
+                    with c2:
+                        if current_status == '탑승':
+                            if st.button("✅ 완료", key=f"btn_b_{row['이름']}_{mode}"):
+                                update_check_status(row['이름'], check_col, '')
+                                st.rerun()
+                        else:
+                            if st.button("탑승", key=f"btn_b_{row['이름']}_{mode}"):
+                                update_check_status(row['이름'], check_col, '탑승')
+                                st.rerun()
+                    with c3:
+                        if current_status == '결석':
+                            if st.button("❌ 완료", key=f"btn_a_{row['이름']}_{mode}"):
+                                update_check_status(row['이름'], check_col, '')
+                                st.rerun()
+                        else:
+                            if st.button("결석", key=f"btn_a_{row['이름']}_{mode}"):
+                                update_check_status(row['이름'], check_col, '결석')
+                                st.rerun()
+                
+                if box:
+                    with box(f"{current_status} 처리됨"):
+                        draw_content()
                 else:
                     with st.container(border=True):
-                        c1, c2, c3 = st.columns([3, 1, 1])
-                        c1.markdown(f"#### {row['이름']}")
-                        c1.caption(f"{row[loc_col]}")
-                        if c2.button("탑승", key=f"btn_b_{i}"):
-                            update_check_status(row['이름'], check_col, '탑승')
-                            st.rerun()
-                        if c3.button("결석", key=f"btn_a_{i}"):
-                            update_check_status(row['이름'], check_col, '결석')
-                            st.rerun()
+                        draw_content()
 
         else:
             st.info("해당 차량에 탑승하는 인원이 없습니다.")
     else:
         st.error("데이터 로드 실패")
 
-# [3] 수련부 출석 (결석 버튼 추가됨)
+# [3] 수련부 출석 (흰 화면 해결 + 버튼 추가)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
+        # 안전한 수련부 리스트 가져오기
         raw_classes = df_students['수련부'].dropna().unique()
         class_list = sorted([str(x) for x in raw_classes if str(x).strip() != ''])
         
@@ -333,51 +345,46 @@ elif menu == "📝 수련부 출석":
             note_col = "비고"
             
             for i, row in class_students.iterrows():
-                current_val = row.get(check_col, '')
-                current_note = row.get(note_col, '')
-                is_checked = (current_val == '출석')
-                
-                # 시각적 색상 분기
-                if current_val == '출석':
-                    box = st.success
-                    msg = "✅ 출석함"
-                elif current_val == '결석':
-                    box = st.error
-                    msg = "❌ 결석함"
-                else:
-                    box = st.container
-                    msg = None
-
-                # 컨테이너 시작
-                if msg:
-                    container = box(msg) # success/error는 메시지 필요
-                else:
-                    container = box(border=True) # container는 border 옵션
-
-                with container:
+                # 항상 안정적인 container 사용 (색상은 내부 텍스트로 표현)
+                with st.container(border=True):
                     c1, c2, c3 = st.columns([2, 1, 1])
+                    
+                    current_val = row.get(check_col, '')
+                    current_note = row.get(note_col, '')
+                    is_checked = (current_val == '출석')
                     
                     with c1:
                         st.subheader(f"{row['이름']}")
+                        # 상태 메시지를 텍스트 색상으로 표시 (에러 방지)
+                        if current_val == '출석':
+                            st.markdown(":green[✅ 출석 완료]")
+                        elif current_val == '결석':
+                            st.markdown(":red[❌ 결석 (차량 연동)]")
+                            
                         if current_note and str(current_note) != 'nan':
                             st.caption(f"📌 {current_note}")
-                            
+
                     with c2:
-                        # 1. 출석 체크박스
+                        # [출석] 체크박스
                         new_check = st.checkbox("출석", value=is_checked, key=f"att_{i}_{row['이름']}")
                         if new_check != is_checked:
                             new_status = '출석' if new_check else ''
                             update_check_status(row['이름'], check_col, new_status)
                             st.rerun()
-                            
+
                     with c3:
-                        # 2. 결석 버튼 (누르면 결석 처리)
-                        if st.button("결석", key=f"absent_{i}_{row['이름']}"):
-                            update_check_status(row['이름'], check_col, "결석")
-                            st.rerun()
+                        # [결석] 버튼
+                        if current_val == '결석':
+                             if st.button("취소", key=f"cncl_{i}_{row['이름']}"):
+                                update_check_status(row['이름'], check_col, '')
+                                st.rerun()
+                        else:
+                            if st.button("결석", key=f"abs_{i}_{row['이름']}"):
+                                update_check_status(row['이름'], check_col, '결석')
+                                st.rerun()
 
                     # 비고란 (접이식)
-                    with st.expander("🔽 특이사항 입력"):
+                    with st.expander("🔽 특이사항 / 빠른 입력"):
                         t1, t2, t3, t4 = st.columns(4)
                         with t1:
                             if st.button("🤒병결", key=f"sick_{i}"):
