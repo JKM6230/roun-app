@@ -12,13 +12,13 @@ gid_students = "0"            # 원생명단
 gid_notice = "1622401395"     # 공지사항
 gid_guide = "1774705614"      # 기질가이드
 gid_attendance = "244532436"  # 출석부
+gid_schedule = "538477435"    # 심사일정
 
 # ==========================================
 # 1. 데이터 로드 엔진
 # ==========================================
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# [핵심] 체크 상태를 기억하는 '보존 노트' 만들기
 if 'check_status' not in st.session_state:
     st.session_state['check_status'] = {}
 
@@ -35,13 +35,14 @@ def load_data(gid):
 df_students = load_data(gid_students)
 df_notice = load_data(gid_notice)
 df_guide = load_data(gid_guide)
+df_schedule = load_data(gid_schedule)
 
 # ==========================================
 # 2. 사이드바 메뉴
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 9.0 (Memory)**")
+    st.markdown("**System Ver 11.0 (Multi-Notice)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -57,9 +58,8 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
     
-    # 이 버튼을 눌러야만 체크가 다 지워집니다
     if st.button("🔄 하루 시작 (초기화)"):
-        st.session_state['check_status'] = {} # 기억 삭제
+        st.session_state['check_status'] = {} 
         st.cache_data.clear()
         st.rerun()
 
@@ -70,34 +70,51 @@ with st.sidebar:
 # [1] 홈 대시보드
 if menu == "🏠 홈 대시보드":
     st.header("📢 오늘의 작전 브리핑")
+    st.caption("최근 등록된 공지사항 3개가 표시됩니다.")
     
+    # [수정됨] 공지사항 여러 줄 띄우기
     if not df_notice.empty:
         try:
-            latest = df_notice.iloc[-1]
-            st.info(f"**[공지 | {latest[0]}]**\n\n{latest[1]}")
+            # 1. 뒤에서부터 3개 가져오기 (최신순)
+            recent_notices = df_notice.tail(3)
+            
+            # 2. 거꾸로 출력 (가장 밑에 쓴 게 맨 위에 나오도록)
+            for i, row in recent_notices.iloc[::-1].iterrows():
+                # 엑셀의 A열(날짜), B열(내용) 가져오기
+                n_date = row[0] if pd.notna(row[0]) else "-"
+                n_content = row[1] if pd.notna(row[1]) else ""
+                
+                # 화면에 표시 (공지 박스)
+                if n_content.strip(): # 내용이 있을 때만
+                    st.info(f"**[{n_date}]** {n_content}")
+                    
         except:
-            st.info("등록된 공지사항이 없습니다.")
+            st.warning("공지사항을 불러오는 중 오류가 발생했습니다.")
     else:
         st.info("등록된 공지사항이 없습니다.")
 
     st.markdown("---")
     
+    # 오늘 심사 대상자
     today = datetime.now().strftime("%Y-%m-%d")
-    if not df_students.empty and '심사일시' in df_students.columns:
-        df_students['심사일시'] = df_students['심사일시'].fillna('').astype(str).str.strip()
-        today_test = df_students[df_students['심사일시'] == today]
+    
+    if not df_schedule.empty:
+        date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
+        # 날짜 비교
+        today_test = df_schedule[df_schedule[date_col].fillna('').astype(str).str.strip() == today]
         
         if not today_test.empty:
             st.error(f"🔥 **오늘 승급심사: {len(today_test)}명**")
             for i, row in today_test.iterrows():
-                level = row.get('단', row.get('현재급', '-'))
-                st.write(f" - **{row['이름']}** (현재: {level})")
+                name_val = row['이름'] if '이름' in row else row.iloc[1]
+                st.write(f" - **{name_val}** (화이팅!)")
         else:
             st.success("✅ 오늘 예정된 심사는 없습니다.")
+    else:
+        st.info("심사 일정 데이터가 없습니다.")
 
-    c1, c2 = st.columns(2)
-    c1.warning("🌧️ [제주 날씨] 습도 높음! 안전 운행")
-    c2.info("💡 차량 운행 시 창문 닫기")
+    # [수정됨] 고정된 날씨/차량 문구 제거함
+    # -> 이제 관장님이 공지사항 탭에 적으시면 위에 뜹니다!
 
 # [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
@@ -109,7 +126,7 @@ elif menu == "🚍 차량 운행표":
         veh_col = '등원차량'
         time_col = '등원시간'
         loc_col = '등원장소'
-        mode_key = "in" # 기억장치 키
+        mode_key = "in"
     else:
         veh_col = '하원차량'
         time_col = '하원시간'
@@ -143,19 +160,10 @@ elif menu == "🚍 차량 운행표":
                     c2.write(f"**{row['이름']}**")
                     c3.write(f"{l_val}")
                     
-                    # [핵심] 기억된 값이 있는지 확인하고 체크박스 표시
-                    # 고유 ID 생성: 차량_모드_이름
                     unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
-                    
-                    # 기억 노트에서 값 가져오기 (없으면 False)
                     saved_val = st.session_state['check_status'].get(unique_id, False)
-                    
-                    # 체크박스 그리기
                     is_checked = c4.checkbox("확인", value=saved_val, key=unique_id)
-                    
-                    # 변경된 값 즉시 저장
                     st.session_state['check_status'][unique_id] = is_checked
-                    
             else:
                 st.info(f"조건에 맞는 탑승 인원이 없습니다.")
         else:
@@ -176,12 +184,9 @@ elif menu == "📝 수련부 출석":
             
             for i, row in class_students.iterrows():
                 with cols[i % 3]:
-                    # [핵심] 출석 기억하기
                     unique_id = f"att_{selected_class}_{row['이름']}"
                     saved_val = st.session_state['check_status'].get(unique_id, False)
-                    
                     is_checked = st.checkbox(f"{row['이름']}", value=saved_val, key=unique_id)
-                    
                     st.session_state['check_status'][unique_id] = is_checked
         else:
             st.info("수련부 데이터가 없습니다.")
@@ -220,18 +225,18 @@ elif menu == "💬 훈육 코치":
 # [6] 승급심사
 elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사 현황")
-    if not df_students.empty and '심사일시' in df_students.columns:
-        df_test = df_students[df_students['심사일시'].fillna('').str.strip() != '']
-        if not df_test.empty:
-            df_test = df_test.sort_values(by='심사일시')
-            level_col = '단' if '단' in df_students.columns else '현재급'
-            
-            cols = ['심사일시', '이름', level_col, '수련부']
-            real_cols = [c for c in cols if c in df_test.columns]
-            
-            st.dataframe(df_test[real_cols], use_container_width=True, hide_index=True)
-        else:
-            st.info("예정된 심사자가 없습니다.")
+    st.info("※ [심사일정] 탭의 데이터를 보여줍니다.")
+    
+    if not df_schedule.empty:
+        target_df = df_schedule.copy()
+        date_col = '날짜' if '날짜' in target_df.columns else target_df.columns[0]
+        try:
+            target_df = target_df.sort_values(by=date_col)
+        except:
+            pass
+        st.dataframe(target_df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("등록된 심사 일정이 없습니다.")
 
 # [7] 이달의 생일
 elif menu == "🎂 이달의 생일":
