@@ -382,3 +382,189 @@ elif menu == "📝 수련부 출석":
                                     update_check_status(row['이름'], check_col, '')
                                     st.rerun()
                             else:
+                                if st.button("결석", key=f"a_{i}_{row['이름']}"):
+                                    update_check_status(row['이름'], check_col, '결석')
+                                    st.rerun()
+                                    
+                        with st.expander("🔽 특이사항/비고 작성"):
+                            st.write("빠른 입력:")
+                            t1, t2, t3, t4 = st.columns(4)
+                            with t1:
+                                if st.button("🤒병결", key=f"t1_{i}"):
+                                    update_check_status(row['이름'], note_col, "병결")
+                                    st.rerun()
+                            with t2:
+                                if st.button("✈여행", key=f"t2_{i}"):
+                                    update_check_status(row['이름'], note_col, "여행")
+                                    st.rerun()
+                            with t3:
+                                if st.button("🤕부상", key=f"t3_{i}"):
+                                    update_check_status(row['이름'], note_col, "부상")
+                                    st.rerun()
+                            with t4:
+                                if st.button("🗑지움", key=f"del_{i}"):
+                                    update_check_status(row['이름'], note_col, "")
+                                    st.rerun()
+                            
+                            safe_note = current_note if str(current_note).lower() != 'nan' else ""
+                            new_note = st.text_input("직접 입력", value=safe_note, key=f"note_in_{i}")
+                            if new_note != safe_note:
+                                update_check_status(row['이름'], note_col, new_note)
+                                st.rerun()
+
+                    # 렌더링
+                    if box_type:
+                        with box_type(msg):
+                            draw_att_card()
+                    else:
+                        with st.container(border=True):
+                            draw_att_card()
+                            
+            else:
+                st.info("등록된 수련부가 없습니다.")
+                
+        except Exception as e:
+            st.error(f"화면을 그리는 중 오류가 발생했습니다: {e}")
+            st.caption("엑셀의 '수련부' 컬럼에 이상한 값이 없는지 확인해주세요.")
+            
+    else:
+        st.error("엑셀에 '수련부' 컬럼이 없습니다. (띄어쓰기 확인)")
+
+# [4] 기질/훈육 통합
+elif menu == "🧠 기질/훈육 통합":
+    st.header("🧠 원생 맞춤형 훈육 가이드")
+    st.info("💡 아이 이름을 검색하면 기질 정보와 훈육법을 한 번에 보여줍니다.")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        search_name = st.text_input("원생 이름 검색", placeholder="예: 김지안")
+    if search_name:
+        student = df_students[df_students['이름'] == search_name]
+        if not student.empty:
+            s_data = student.iloc[0]
+            g_type = s_data.get('기질유형', '미검사')
+            st.divider()
+            st.subheader(f"🥋 {s_data['이름']}")
+            i1, i2, i3 = st.columns(3)
+            i1.metric("수련부", s_data.get('수련부', '-'))
+            i2.metric("현재급", s_data.get('단', s_data.get('현재급', '-')))
+            i3.metric("기질유형", g_type)
+            if g_type != '미검사' and not df_guide.empty:
+                guide_match = df_guide[df_guide['기질유형'] == g_type]
+                if not guide_match.empty:
+                    g_row = guide_match.iloc[0]
+                    st.success(f"✨ **{g_type}** 아이를 위한 지도 전략")
+                    with st.container(border=True):
+                        st.markdown(f"**🎯 핵심 특징:**")
+                        st.write(g_row.get('핵심특징', '-'))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.info("**🙆‍♂️ 이렇게 해주세요 (DO)**")
+                        st.write(g_row.get('지도_DO(해라)', '-'))
+                    with c2:
+                        st.error("**🙅‍♂️ 이건 피해주세요 (DON'T)**")
+                        st.write(g_row.get('지도_DONT(하지마라)', '-'))
+                    with st.expander("💬 상황별 훈육 스크립트 (말하기 예시)"):
+                        st.code(g_row.get('훈육_스크립트', '데이터 없음'), language='text')
+                else:
+                    st.warning("가이드 데이터에서 해당 기질을 찾을 수 없습니다.")
+            else:
+                st.warning("기질 검사가 진행되지 않았거나, 데이터가 없습니다.")
+        else:
+            st.error("검색된 원생이 없습니다.")
+
+# [6] 승급심사
+elif menu == "📈 승급심사 관리":
+    st.header("📈 승급심사 현황")
+    st.info("※ [심사일정] 탭의 데이터를 보여줍니다.")
+    if not df_schedule.empty:
+        target_df = df_schedule.copy()
+        date_col = '날짜' if '날짜' in target_df.columns else target_df.columns[0]
+        target_df['clean_date'] = target_df[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
+        target_df['sort_date'] = pd.to_datetime(target_df['clean_date'], errors='coerce')
+        target_df = target_df.sort_values(by='sort_date')
+        st.dataframe(target_df.drop(columns=['clean_date', 'sort_date'], errors='ignore'), use_container_width=True, hide_index=True)
+    else:
+        st.warning("등록된 심사 일정이 없습니다.")
+
+# [7] 이달의 생일
+elif menu == "🎂 이달의 생일":
+    kst_now = get_korea_time()
+    this_month = kst_now.month
+    st.header("🎂 이달의 생일자")
+    st.subheader(f"{this_month}월의 주인공 🎉")
+    birth_col = '생일' if '생일' in df_students.columns else '생년월일'
+    if not df_students.empty and birth_col in df_students.columns:
+        df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
+        df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
+        b_kids = df_students[df_students['temp_date'].dt.month == this_month]
+        if not b_kids.empty:
+            b_kids['day_only'] = b_kids['temp_date'].dt.day
+            b_kids = b_kids.sort_values(by='day_only')
+            st.balloons()
+            for i, row in b_kids.iterrows():
+                d_str = row['temp_date'].strftime('%m월 %d일') if pd.notnull(row['temp_date']) else str(row[birth_col])
+                info_txt = f"🎂 **{row['이름']}** ({d_str})"
+                if '수련부' in row: info_txt += f" - {row['수련부']}"
+                st.info(info_txt)
+        else:
+            st.write(f"{this_month}월 생일자가 없습니다.")
+    else:
+        st.error(f"엑셀에 '{birth_col}' 컬럼이 없습니다.")
+
+# [관리자 모드]
+elif menu == "🔐 관리자 모드":
+    st.header("🔐 관리자 전용 모드")
+    admin_pw = st.text_input("관리자 비밀번호를 입력하세요", type="password")
+    
+    if admin_pw == "0577":
+        st.success("관리자 권한이 승인되었습니다.")
+        st.markdown("---")
+        tab1, tab2 = st.tabs(["🔍 원생 통합 조회", "🔥 시스템 관리"])
+        with tab1:
+            st.subheader("원생 정보 조회")
+            search_name = st.text_input("이름 검색 (예: 김지안)", placeholder="이름을 입력하세요")
+            if search_name and not df_students.empty:
+                student = df_students[df_students['이름'] == search_name]
+                if not student.empty:
+                    s_data = student.iloc[0]
+                    level = s_data.get('단', s_data.get('현재급', '-'))
+                    cls_time = s_data.get('수련부', '-')
+                    g_type = s_data.get('기질유형', '미검사')
+                    phone_1 = s_data.get('보호자연락처', '-')
+                    in_car = s_data.get('등원차량', '-')
+                    in_time = s_data.get('등원시간', '-')
+                    st.markdown(f"### 🥋 {s_data['이름']}")
+                    st.write(f"**정보:** {level} | {cls_time}부 | {g_type}")
+                    st.write(f"**연락처:** {phone_1}")
+                    st.write(f"**차량:** 등원({in_car}/{in_time})")
+                else:
+                    st.error("검색된 원생이 없습니다.")
+        with tab2:
+            st.subheader("데이터 초기화")
+            st.warning("⚠️ 하루 일과가 끝나면 눌러주세요. (등원/하원/출석/비고 기록을 모두 지웁니다)")
+            if st.button("🔥 하루 마감 (전체 삭제)"):
+                with st.spinner("구글 시트 청소 중..."):
+                    try:
+                        client = get_gspread_client()
+                        sh = client.open_by_key(SHEET_ID)
+                        ws = sh.worksheet("원생명단")
+                        cols_to_clear = ["등원확인", "하원확인", "출석확인", "비고"]
+                        ranges = []
+                        for c_name in cols_to_clear:
+                            try:
+                                cell = ws.find(c_name)
+                                col_letter = gspread.utils.rowcol_to_a1(1, cell.col).replace('1', '')
+                                ranges.append(f"{col_letter}2:{col_letter}1000")
+                            except:
+                                pass
+                        if ranges:
+                            ws.batch_clear(ranges)
+                            st.success("모든 체크 기록이 초기화되었습니다.")
+                            load_fast_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("초기화할 컬럼을 찾지 못했습니다.")
+                    except Exception as e:
+                        st.error(f"오류 발생: {e}")
+    elif admin_pw:
+        st.error("비밀번호가 틀렸습니다.")
