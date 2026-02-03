@@ -18,12 +18,15 @@ gid_attendance = "244532436"  # 출석부
 # ==========================================
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
+# [핵심] 체크 상태를 기억하는 '보존 노트' 만들기
+if 'check_status' not in st.session_state:
+    st.session_state['check_status'] = {}
+
 @st.cache_data(ttl=0)
 def load_data(gid):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     try:
         df = pd.read_csv(url, dtype=str)
-        # 엑셀 제목의 공백 제거 (오류 방지)
         df.columns = df.columns.str.strip()
         return df
     except:
@@ -38,7 +41,7 @@ df_guide = load_data(gid_guide)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 8.0 (Birthday Fix)**")
+    st.markdown("**System Ver 9.0 (Memory)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -53,7 +56,10 @@ with st.sidebar:
     
     st.markdown("---")
     st.caption(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
-    if st.button("🔄 새로고침"):
+    
+    # 이 버튼을 눌러야만 체크가 다 지워집니다
+    if st.button("🔄 하루 시작 (초기화)"):
+        st.session_state['check_status'] = {} # 기억 삭제
         st.cache_data.clear()
         st.rerun()
 
@@ -103,10 +109,12 @@ elif menu == "🚍 차량 운행표":
         veh_col = '등원차량'
         time_col = '등원시간'
         loc_col = '등원장소'
+        mode_key = "in" # 기억장치 키
     else:
         veh_col = '하원차량'
         time_col = '하원시간'
         loc_col = '하원장소'
+        mode_key = "out"
 
     if not df_students.empty:
         if veh_col in df_students.columns:
@@ -134,7 +142,20 @@ elif menu == "🚍 차량 운행표":
                     c1.write(f"**{t_val}**")
                     c2.write(f"**{row['이름']}**")
                     c3.write(f"{l_val}")
-                    c4.checkbox("확인", key=f"c_{i}")
+                    
+                    # [핵심] 기억된 값이 있는지 확인하고 체크박스 표시
+                    # 고유 ID 생성: 차량_모드_이름
+                    unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
+                    
+                    # 기억 노트에서 값 가져오기 (없으면 False)
+                    saved_val = st.session_state['check_status'].get(unique_id, False)
+                    
+                    # 체크박스 그리기
+                    is_checked = c4.checkbox("확인", value=saved_val, key=unique_id)
+                    
+                    # 변경된 값 즉시 저장
+                    st.session_state['check_status'][unique_id] = is_checked
+                    
             else:
                 st.info(f"조건에 맞는 탑승 인원이 없습니다.")
         else:
@@ -152,9 +173,16 @@ elif menu == "📝 수련부 출석":
             class_students = df_students[df_students['수련부'] == selected_class]
             st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
             cols = st.columns(3)
+            
             for i, row in class_students.iterrows():
                 with cols[i % 3]:
-                    st.checkbox(f"{row['이름']}", key=f"att_{i}")
+                    # [핵심] 출석 기억하기
+                    unique_id = f"att_{selected_class}_{row['이름']}"
+                    saved_val = st.session_state['check_status'].get(unique_id, False)
+                    
+                    is_checked = st.checkbox(f"{row['이름']}", value=saved_val, key=unique_id)
+                    
+                    st.session_state['check_status'][unique_id] = is_checked
         else:
             st.info("수련부 데이터가 없습니다.")
     else:
@@ -205,43 +233,26 @@ elif menu == "📈 승급심사 관리":
         else:
             st.info("예정된 심사자가 없습니다.")
 
-# [7] 이달의 생일 (강력한 인식 기능 탑재)
+# [7] 이달의 생일
 elif menu == "🎂 이달의 생일":
     st.header("🎂 이달의 생일자")
     this_month = datetime.now().month
     st.subheader(f"{this_month}월의 주인공 🎉")
     
-    # 1. 컬럼 찾기
     birth_col = '생일' if '생일' in df_students.columns else '생년월일'
-    
     if not df_students.empty and birth_col in df_students.columns:
-        
-        # 2. [스마트 클리닝] 숫자만 남기기 (2018-06-14, 2018.06.14 -> 20180614)
-        # 이렇게 하면 어떤 형식으로 적어도 다 8자리 숫자로 통일됩니다.
         df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
-        
-        # 3. 날짜 변환 (YYYYMMDD 형식)
         df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
         
-        # 4. 이번 달 생일자 필터링
         b_kids = df_students[df_students['temp_date'].dt.month == this_month]
-        
         if not b_kids.empty:
             st.balloons()
             for i, row in b_kids.iterrows():
-                # 날짜 예쁘게 포맷팅
-                if pd.notnull(row['temp_date']):
-                    date_str = row['temp_date'].strftime('%m월 %d일')
-                else:
-                    date_str = str(row[birth_col])
-                
-                # 수련부 정보 추가
-                info_txt = f"🎂 **{row['이름']}** ({date_str})"
-                if '수련부' in row:
-                    info_txt += f" - {row['수련부']}"
-                
+                d_str = row['temp_date'].strftime('%m월 %d일') if pd.notnull(row['temp_date']) else str(row[birth_col])
+                info_txt = f"🎂 **{row['이름']}** ({d_str})"
+                if '수련부' in row: info_txt += f" - {row['수련부']}"
                 st.info(info_txt)
         else:
-            st.write(f"이번 달({this_month}월)에는 생일인 친구가 없습니다.")
+            st.write(f"{this_month}월 생일자가 없습니다.")
     else:
         st.error(f"엑셀에 '{birth_col}' 컬럼이 없습니다.")
