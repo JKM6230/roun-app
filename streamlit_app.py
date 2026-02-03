@@ -46,11 +46,12 @@ df_schedule = load_data(gid_schedule)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 17.0 (Safety Bar)**")
+    st.markdown("**System Ver 18.0 (Profile)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
         "🏠 홈 대시보드", 
+        "🔍 원생 통합 조회",  # [NEW] 위치 이동
         "🚍 차량 운행표", 
         "📝 수련부 출석", 
         "🔍 기질 인사이트", 
@@ -111,32 +112,25 @@ if menu == "🏠 홈 대시보드":
     )
 
     st.header("📢 오늘의 작전 브리핑")
-    st.caption("최근 등록된 공지사항 10개가 표시됩니다.")
     
-    # [NEW] 공지사항 10개 + 요일 표시 기능
+    # 공지사항
     if not df_notice.empty:
         try:
-            # 1. 최근 10개 가져오기
             recent_notices = df_notice.tail(10)
-            
-            # 2. 요일 리스트 (한국어)
             weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
             
             for i, row in recent_notices.iloc[::-1].iterrows():
                 n_date_raw = row[0] if pd.notna(row[0]) else "-"
                 n_content = row[1] if pd.notna(row[1]) else ""
                 
-                # 요일 계산 로직
                 display_date = n_date_raw
                 try:
-                    # 날짜 형식으로 변환 시도
                     dt_obj = pd.to_datetime(str(n_date_raw).replace('.', '-'), errors='coerce')
                     if pd.notnull(dt_obj):
-                        # 요일 붙이기 (YYYY-MM-DD (요일))
                         w_str = weekdays[dt_obj.weekday()]
                         display_date = f"{dt_obj.strftime('%m/%d')} {w_str}"
                 except:
-                    pass # 변환 실패하면 그냥 원래 글자대로 출력
+                    pass
 
                 if n_content.strip():
                     st.info(f"**[{display_date}]** {n_content}")
@@ -147,6 +141,7 @@ if menu == "🏠 홈 대시보드":
 
     st.markdown("---")
     
+    # 심사 일정
     today_dt = get_korea_time().date()
     
     if not df_schedule.empty:
@@ -166,6 +161,7 @@ if menu == "🏠 홈 대시보드":
     else:
         st.info("심사 일정 데이터가 없습니다.")
         
+    # 오늘 생일자
     birth_col = '생일' if '생일' in df_students.columns else '생년월일'
     if not df_students.empty and birth_col in df_students.columns:
         df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
@@ -182,7 +178,79 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [2] 차량 운행표
+# [NEW] 원생 통합 조회 (프로필)
+elif menu == "🔍 원생 통합 조회":
+    st.header("🔍 원생 통합 조회")
+    st.caption("이름을 입력하면 모든 정보를 한눈에 볼 수 있습니다.")
+    
+    search_name = st.text_input("이름 검색 (예: 김지안)", placeholder="이름을 입력하세요")
+    
+    if search_name and not df_students.empty:
+        # 이름으로 검색
+        student = df_students[df_students['이름'] == search_name]
+        
+        if not student.empty:
+            s_data = student.iloc[0] # 첫 번째 검색 결과
+            
+            # 정보 가져오기 (없으면 '-' 표시)
+            level = s_data.get('단', s_data.get('현재급', '-'))
+            cls_time = s_data.get('수련부', '-')
+            g_type = s_data.get('기질유형', '미검사')
+            
+            # 연락처 정보 (엑셀 컬럼 그대로 사용)
+            phone_1 = s_data.get('보호자연락처', '-')
+            phone_2 = s_data.get('기타보호자연락처', '-')
+            
+            # 등하원 정보
+            in_car = s_data.get('등원차량', '-')
+            in_time = s_data.get('등원시간', '-')
+            in_loc = s_data.get('등원장소', '-')
+            out_car = s_data.get('하원차량', '-')
+            out_time = s_data.get('하원시간', '-')
+            out_loc = s_data.get('하원장소', '-')
+
+            # === 프로필 카드 출력 ===
+            st.markdown("---")
+            c1, c2 = st.columns([1, 1])
+            
+            with c1:
+                st.subheader(f"🥋 {s_data['이름']}")
+                st.write(f"**수련부:** {cls_time}")
+                st.write(f"**현재급:** {level}")
+                st.info(f"**기질:** {g_type}")
+                
+            with c2:
+                st.subheader("📞 비상 연락망")
+                st.write(f"**보호자:** {phone_1}")
+                st.write(f"**기타:** {phone_2}")
+            
+            st.markdown("---")
+            st.subheader("🚍 차량 이용 정보")
+            
+            tc1, tc2 = st.columns(2)
+            with tc1:
+                st.write("🔵 **등원**")
+                st.write(f"- {in_car} / {in_time}")
+                st.write(f"- {in_loc}")
+            with tc2:
+                st.write("🟠 **하원**")
+                st.write(f"- {out_car} / {out_time}")
+                st.write(f"- {out_loc}")
+                
+            # 기질 상세 정보 연결
+            if not df_guide.empty and g_type != '미검사':
+                st.markdown("---")
+                guide_match = df_guide[df_guide['기질유형'] == g_type]
+                if not guide_match.empty:
+                    g_row = guide_match.iloc[0]
+                    with st.expander(f"💡 {g_type} 지도 가이드 보기"):
+                        st.write(f"**특징:** {g_row.get('핵심특징', '-')}")
+                        st.write(f"**지도법:** {g_row.get('지도_DO(해라)', '-')}")
+        else:
+            st.error("검색된 원생이 없습니다.")
+
+
+# [2] 차량 운행표 (진행률 바 오류 수정 완료)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
@@ -215,21 +283,19 @@ elif menu == "🚍 차량 운행표":
                 if time_col in final_df.columns:
                     final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
                 
-                # [NEW] 진행률 계산 로직
+                # [수정된 로직] session_state를 먼저 확인해서 카운트 계산
                 total_count = len(final_df)
                 checked_count = 0
                 
-                # 먼저 한 번 훑어서 몇 명이 체크되었는지 확인
-                for i, row in final_df.iterrows():
+                for _, row in final_df.iterrows():
                     unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
                     if st.session_state['check_status'].get(unique_id, False):
                         checked_count += 1
                 
-                # 진행률 바 표시
                 progress_val = checked_count / total_count if total_count > 0 else 0
-                st.write(f"### 🕒 {selected_car} {mode}")
                 
-                # 초록색 진행 바
+                # 진행률 바 표시
+                st.write(f"### 🕒 {selected_car} {mode}")
                 st.progress(progress_val)
                 st.caption(f"🏁 **탑승 현황: {checked_count} / {total_count} 명 ({int(progress_val * 100)}%)**")
                 
@@ -249,12 +315,23 @@ elif menu == "🚍 차량 운행표":
                             
                         with c2:
                             unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
+                            # 현재 저장된 값 불러오기
                             saved_val = st.session_state['check_status'].get(unique_id, False)
                             st.write("") 
                             
-                            # 체크박스를 누르면 session_state가 바뀌고, 화면이 리로드되면서 위의 진행률도 바뀝니다.
+                            # [핵심 수정] 체크박스를 누르면 즉시 화면을 갱신(rerun)해서 위의 숫자를 바꿈
+                            def update_status(uid=unique_id):
+                                # 현재 상태의 반대값으로 저장 (Toggle)
+                                # Streamlit checkbox handles value, but manual sync ensures safety
+                                pass 
+
                             is_checked = st.checkbox("탑승", value=saved_val, key=unique_id)
-                            st.session_state['check_status'][unique_id] = is_checked
+                            
+                            # 상태가 바뀌었으면 저장하고 리런
+                            if is_checked != saved_val:
+                                st.session_state['check_status'][unique_id] = is_checked
+                                st.rerun() # 즉시 새로고침해서 진행률 바 업데이트
+
             else:
                 st.info(f"조건에 맞는 탑승 인원이 없습니다.")
         else:
@@ -279,7 +356,10 @@ elif menu == "📝 수련부 출석":
                     unique_id = f"att_{selected_class}_{row['이름']}"
                     saved_val = st.session_state['check_status'].get(unique_id, False)
                     is_checked = st.checkbox(f"{row['이름']}", value=saved_val, key=unique_id)
-                    st.session_state['check_status'][unique_id] = is_checked
+                    
+                    if is_checked != saved_val:
+                        st.session_state['check_status'][unique_id] = is_checked
+                        # 출석부는 굳이 리런할 필요 없으므로 생략 (속도 위해)
         else:
             st.info("수련부 데이터가 없습니다.")
     else:
