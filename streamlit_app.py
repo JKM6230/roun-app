@@ -37,7 +37,7 @@ def load_fast_data():
         worksheet = sh.worksheet("원생명단")
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-        df = df.astype(str) # 모든 데이터를 문자로 변환
+        df = df.astype(str) # 안전하게 문자열로 변환
         return df
     except:
         return pd.DataFrame()
@@ -59,7 +59,7 @@ def load_slow_data(sheet_name):
     except:
         return pd.DataFrame()
 
-# [핵심] 데이터 쓰기 함수 (연동 로직)
+# [핵심] 데이터 쓰기 함수 (연동 로직 포함)
 def update_check_status(student_name, col_name, status_value):
     client = get_gspread_client()
     if not client: return
@@ -72,18 +72,20 @@ def update_check_status(student_name, col_name, status_value):
             cell = worksheet.find(student_name)
             row_num = cell.row
             
-            # 연동 로직
+            # [연동 로직]
             cols_to_update = []
+            
             if col_name == "출석확인":
                 if status_value == "결석":
-                    cols_to_update = ["출석확인", "등원확인", "하원확인"]
-                elif status_value == "":
+                    # 출석부에서 '결석' 처리 시 -> 차량 등/하원도 모두 결석
                     cols_to_update = ["출석확인", "등원확인", "하원확인"]
                 else:
+                    # 출석 or 취소 시 -> 출석부만 변경
                     cols_to_update = ["출석확인"]
             else:
                 cols_to_update = [col_name]
 
+            # 업데이트 실행
             for target_col in cols_to_update:
                 try:
                     header_cell = worksheet.find(target_col)
@@ -113,7 +115,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 35.0 (Safety)**")
+    st.markdown("**System Ver 36.0 (Stable)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -276,6 +278,7 @@ elif menu == "🚍 차량 운행표":
             for i, row in final_df.iterrows():
                 current_status = row.get(check_col, '')
                 
+                # 색상 박스 로직
                 if current_status == '탑승':
                     box = st.success
                 elif current_status == '결석':
@@ -321,114 +324,76 @@ elif menu == "🚍 차량 운행표":
     else:
         st.error("데이터 로드 실패")
 
-# [3] 수련부 출석 (안전 모드 적용)
+# [3] 수련부 출석 (흰 화면 버그 수정 - 심플 모드 복귀)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
-    
-    # 1. 컬럼 존재 확인
     if '수련부' in df_students.columns:
-        try:
-            # 2. 수련부 목록 안전하게 가져오기 (문자열 변환 후 정렬)
-            raw_classes = df_students['수련부'].dropna().unique()
-            class_list = sorted([str(x) for x in raw_classes if str(x).strip() != ''])
+        # 안전한 수련부 리스트 가져오기
+        raw_classes = df_students['수련부'].dropna().unique()
+        class_list = sorted([str(x) for x in raw_classes if str(x).strip() != ''])
+        
+        if class_list:
+            selected_class = st.selectbox("수련 시간 선택", class_list)
+            class_students = df_students[df_students['수련부'].astype(str) == selected_class].sort_values(by='이름')
             
-            if class_list:
-                selected_class = st.selectbox("수련 시간 선택", class_list)
-                
-                # 3. 학생 필터링
-                class_students = df_students[df_students['수련부'].astype(str) == selected_class].sort_values(by='이름')
-                
-                st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
-                st.caption("※ '결석' 버튼을 누르면 차량 스케줄도 '결석' 처리됩니다.")
-                
-                check_col = "출석확인"
-                note_col = "비고"
-                
-                # 4. 카드 그리기 (반복문)
-                for i, row in class_students.iterrows():
+            st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
+            
+            check_col = "출석확인"
+            note_col = "비고"
+            
+            for i, row in class_students.iterrows():
+                with st.container(border=True):
+                    c1, c2 = st.columns([1, 2])
+                    
                     current_val = row.get(check_col, '')
                     current_note = row.get(note_col, '')
+                    is_checked = (current_val == '출석')
                     
-                    # 박스 타입 결정
-                    if current_val == '출석':
-                        box_type = st.success
-                        msg = "✅ 출석 완료"
-                    elif current_val == '결석':
-                        box_type = st.error
-                        msg = "❌ 결석 (차량 연동됨)"
-                    else:
-                        box_type = None
-                        msg = ""
-                    
-                    # 내부 콘텐츠 함수 (오류 방지를 위해 함수 대신 직접 구현도 고려 가능하나, 가독성을 위해 유지)
-                    def draw_att_card():
-                        c1, c2, c3 = st.columns([2, 1, 1])
-                        with c1:
-                            st.subheader(f"{row['이름']}")
-                            if current_note and str(current_note).lower() != 'nan':
-                                st.caption(f"📝 {current_note}")
-                        with c2:
-                            if current_val == '출석':
-                                if st.button("✅ 완료", key=f"p_c_{i}_{row['이름']}"):
-                                    update_check_status(row['이름'], check_col, '')
-                                    st.rerun()
-                            else:
-                                if st.button("출석", key=f"p_{i}_{row['이름']}"):
-                                    update_check_status(row['이름'], check_col, '출석')
-                                    st.rerun()
-                        with c3:
-                            if current_val == '결석':
-                                if st.button("❌ 완료", key=f"a_c_{i}_{row['이름']}"):
-                                    update_check_status(row['이름'], check_col, '')
-                                    st.rerun()
-                            else:
-                                if st.button("결석", key=f"a_{i}_{row['이름']}"):
-                                    update_check_status(row['이름'], check_col, '결석')
-                                    st.rerun()
-                                    
-                        with st.expander("🔽 특이사항/비고 작성"):
-                            st.write("빠른 입력:")
-                            t1, t2, t3, t4 = st.columns(4)
-                            with t1:
-                                if st.button("🤒병결", key=f"t1_{i}"):
-                                    update_check_status(row['이름'], note_col, "병결")
-                                    st.rerun()
-                            with t2:
-                                if st.button("✈여행", key=f"t2_{i}"):
-                                    update_check_status(row['이름'], note_col, "여행")
-                                    st.rerun()
-                            with t3:
-                                if st.button("🤕부상", key=f"t3_{i}"):
-                                    update_check_status(row['이름'], note_col, "부상")
-                                    st.rerun()
-                            with t4:
-                                if st.button("🗑지움", key=f"del_{i}"):
-                                    update_check_status(row['이름'], note_col, "")
-                                    st.rerun()
+                    with c1:
+                        st.subheader(f"{row['이름']}")
+                        
+                    with c2:
+                        # 1. 체크박스 복구 (가장 안정적)
+                        new_check = st.checkbox("✅ 출석", value=is_checked, key=f"att_{selected_class}_{i}_{row['이름']}")
+                        if new_check != is_checked:
+                            new_status = '출석' if new_check else ''
+                            update_check_status(row['이름'], check_col, new_status)
+                            st.rerun()
                             
-                            safe_note = current_note if str(current_note).lower() != 'nan' else ""
-                            new_note = st.text_input("직접 입력", value=safe_note, key=f"note_in_{i}")
-                            if new_note != safe_note:
-                                update_check_status(row['이름'], note_col, new_note)
-                                st.rerun()
+                    # 특이사항 미리보기
+                    if current_note and str(current_note) != 'nan':
+                        st.caption(f"📌 {current_note}")
 
-                    # 렌더링
-                    if box_type:
-                        with box_type(msg):
-                            draw_att_card()
-                    else:
-                        with st.container(border=True):
-                            draw_att_card()
-                            
-            else:
-                st.info("등록된 수련부가 없습니다.")
-                
-        except Exception as e:
-            st.error(f"화면을 그리는 중 오류가 발생했습니다: {e}")
-            st.caption("엑셀의 '수련부' 컬럼에 이상한 값이 없는지 확인해주세요.")
-            
+                    # 2. 접이식 메뉴 (여기서 결석 처리 가능)
+                    with st.expander("🔽 특이사항 / 결석 처리"):
+                        t1, t2, t3, t4 = st.columns(4)
+                        with t1:
+                            # [결석] 버튼 누르면 -> 차량표까지 연동됨
+                            if st.button("❌결석", key=f"absent_{i}"):
+                                update_check_status(row['이름'], check_col, "결석")
+                                st.rerun()
+                        with t2:
+                            if st.button("🤒병결", key=f"sick_{i}"):
+                                update_check_status(row['이름'], note_col, "병결")
+                                st.rerun()
+                        with t3:
+                            if st.button("✈여행", key=f"trip_{i}"):
+                                update_check_status(row['이름'], note_col, "여행")
+                                st.rerun()
+                        with t4:
+                            if st.button("🗑지움", key=f"del_{i}"):
+                                update_check_status(row['이름'], note_col, "")
+                                st.rerun()
+                                
+                        safe_note = current_note if str(current_note) != 'nan' else ""
+                        new_note = st.text_input("직접 입력", value=safe_note, key=f"note_in_{i}")
+                        if new_note != safe_note:
+                            update_check_status(row['이름'], note_col, new_note)
+                            st.rerun()
+        else:
+            st.info("수련부 데이터가 없습니다.")
     else:
-        st.error("엑셀에 '수련부' 컬럼이 없습니다. (띄어쓰기 확인)")
+        st.error("엑셀에 '수련부' 컬럼이 없습니다.")
 
 # [4] 기질/훈육 통합
 elif menu == "🧠 기질/훈육 통합":
