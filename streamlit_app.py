@@ -38,11 +38,11 @@ df_guide = load_data(gid_guide)
 df_schedule = load_data(gid_schedule)
 
 # ==========================================
-# 2. 사이드바 메뉴
+# 2. 사이드바 메뉴 (보안 기능 추가)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 11.0 (Multi-Notice)**")
+    st.markdown("**System Ver 12.0 (Secure)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -58,10 +58,18 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
     
-    if st.button("🔄 하루 시작 (초기화)"):
-        st.session_state['check_status'] = {} 
-        st.cache_data.clear()
-        st.rerun()
+    # [NEW] 관리자 비밀번호 기능
+    st.markdown("### 🔐 관리자 메뉴")
+    admin_pw = st.text_input("비밀번호 입력", type="password", key="admin_pw")
+    
+    if admin_pw == "0577":
+        if st.button("🔄 하루 시작 (초기화)"):
+            st.session_state['check_status'] = {} 
+            st.cache_data.clear()
+            st.rerun()
+        st.success("관리자 인증됨")
+    elif admin_pw:
+        st.error("비밀번호가 틀렸습니다.")
 
 # ==========================================
 # 3. 기능 구현
@@ -72,22 +80,14 @@ if menu == "🏠 홈 대시보드":
     st.header("📢 오늘의 작전 브리핑")
     st.caption("최근 등록된 공지사항 3개가 표시됩니다.")
     
-    # [수정됨] 공지사항 여러 줄 띄우기
     if not df_notice.empty:
         try:
-            # 1. 뒤에서부터 3개 가져오기 (최신순)
             recent_notices = df_notice.tail(3)
-            
-            # 2. 거꾸로 출력 (가장 밑에 쓴 게 맨 위에 나오도록)
             for i, row in recent_notices.iloc[::-1].iterrows():
-                # 엑셀의 A열(날짜), B열(내용) 가져오기
                 n_date = row[0] if pd.notna(row[0]) else "-"
                 n_content = row[1] if pd.notna(row[1]) else ""
-                
-                # 화면에 표시 (공지 박스)
-                if n_content.strip(): # 내용이 있을 때만
+                if n_content.strip():
                     st.info(f"**[{n_date}]** {n_content}")
-                    
         except:
             st.warning("공지사항을 불러오는 중 오류가 발생했습니다.")
     else:
@@ -95,12 +95,10 @@ if menu == "🏠 홈 대시보드":
 
     st.markdown("---")
     
-    # 오늘 심사 대상자
     today = datetime.now().strftime("%Y-%m-%d")
     
     if not df_schedule.empty:
         date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
-        # 날짜 비교
         today_test = df_schedule[df_schedule[date_col].fillna('').astype(str).str.strip() == today]
         
         if not today_test.empty:
@@ -112,9 +110,6 @@ if menu == "🏠 홈 대시보드":
             st.success("✅ 오늘 예정된 심사는 없습니다.")
     else:
         st.info("심사 일정 데이터가 없습니다.")
-
-    # [수정됨] 고정된 날씨/차량 문구 제거함
-    # -> 이제 관장님이 공지사항 탭에 적으시면 위에 뜹니다!
 
 # [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
@@ -171,14 +166,17 @@ elif menu == "🚍 차량 운행표":
     else:
         st.error("데이터를 불러오지 못했습니다.")
 
-# [3] 수련부 출석
+# [3] 수련부 출석 (가나다순 정렬 적용)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
         class_list = sorted(df_students['수련부'].dropna().unique().tolist())
         if class_list:
             selected_class = st.selectbox("수련 시간 선택", class_list)
-            class_students = df_students[df_students['수련부'] == selected_class]
+            
+            # [수정됨] 이름 기준 오름차순(가나다순) 정렬
+            class_students = df_students[df_students['수련부'] == selected_class].sort_values(by='이름')
+            
             st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
             cols = st.columns(3)
             
@@ -238,7 +236,7 @@ elif menu == "📈 승급심사 관리":
     else:
         st.warning("등록된 심사 일정이 없습니다.")
 
-# [7] 이달의 생일
+# [7] 이달의 생일 (날짜순 정렬 적용)
 elif menu == "🎂 이달의 생일":
     st.header("🎂 이달의 생일자")
     this_month = datetime.now().month
@@ -250,7 +248,11 @@ elif menu == "🎂 이달의 생일":
         df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
         
         b_kids = df_students[df_students['temp_date'].dt.month == this_month]
+        
         if not b_kids.empty:
+            # [수정됨] 날짜 기준 오름차순 정렬
+            b_kids = b_kids.sort_values(by='temp_date')
+            
             st.balloons()
             for i, row in b_kids.iterrows():
                 d_str = row['temp_date'].strftime('%m월 %d일') if pd.notnull(row['temp_date']) else str(row[birth_col])
