@@ -46,10 +46,9 @@ df_schedule = load_data(gid_schedule)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 19.0 (Admin & Absent)**")
+    st.markdown("**System Ver 20.0 (Perfect)**")
     st.markdown("---")
     
-    # [변경됨] 통합 조회를 관리자 모드로 숨김
     menu = st.radio("메뉴 선택", [
         "🏠 홈 대시보드", 
         "🚍 차량 운행표", 
@@ -58,7 +57,7 @@ with st.sidebar:
         "💬 훈육 코치", 
         "📈 승급심사 관리",
         "🎂 이달의 생일",
-        "🔐 관리자 모드" # [NEW] 맨 아래로 이동
+        "🔐 관리자 모드"
     ])
     
     st.markdown("---")
@@ -73,7 +72,6 @@ with st.sidebar:
 
 # [1] 홈 대시보드
 if menu == "🏠 홈 대시보드":
-    # 실시간 시계
     st.markdown(
         """
         <div style="text-align: right; font-size: 1.2em; font-weight: bold; color: #444; margin-bottom: 10px;">
@@ -102,7 +100,6 @@ if menu == "🏠 홈 대시보드":
 
     st.header("📢 오늘의 작전 브리핑")
     
-    # 공지사항
     if not df_notice.empty:
         try:
             recent_notices = df_notice.tail(10)
@@ -130,7 +127,6 @@ if menu == "🏠 홈 대시보드":
 
     st.markdown("---")
     
-    # 심사 일정
     today_dt = get_korea_time().date()
     
     if not df_schedule.empty:
@@ -150,7 +146,6 @@ if menu == "🏠 홈 대시보드":
     else:
         st.info("심사 일정 데이터가 없습니다.")
         
-    # 오늘 생일자
     birth_col = '생일' if '생일' in df_students.columns else '생년월일'
     if not df_students.empty and birth_col in df_students.columns:
         df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
@@ -167,18 +162,15 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [NEW] 관리자 모드 (통합조회 + 초기화)
+# [관리자 모드]
 elif menu == "🔐 관리자 모드":
     st.header("🔐 관리자 전용 모드")
-    
-    # 비밀번호 입력
     admin_pw = st.text_input("관리자 비밀번호를 입력하세요", type="password")
     
     if admin_pw == "0577":
         st.success("관리자 권한이 승인되었습니다.")
         st.markdown("---")
         
-        # 탭 분리
         tab1, tab2 = st.tabs(["🔍 원생 통합 조회", "🔥 시스템 관리"])
         
         with tab1:
@@ -247,7 +239,7 @@ elif menu == "🔐 관리자 모드":
     elif admin_pw:
         st.error("비밀번호가 틀렸습니다.")
 
-# [2] 차량 운행표 (결석 체크 추가)
+# [2] 차량 운행표 (로직 개선됨)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
@@ -280,26 +272,46 @@ elif menu == "🚍 차량 운행표":
                 if time_col in final_df.columns:
                     final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
                 
-                # 진행률 계산 (탑승만 계산)
+                # [핵심 수정] 진행률 로직: 탑승 OR 결석이면 '확인 완료'
                 total_count = len(final_df)
-                checked_count = 0
+                processed_count = 0  # 처리된 인원 (탑승 + 결석)
+                boarded_count = 0    # 실제 탑승 인원
+                absent_count = 0     # 결석 인원
+
                 for _, row in final_df.iterrows():
-                    unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
-                    if st.session_state['check_status'].get(unique_id, False):
-                        checked_count += 1
+                    u_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
+                    a_id = f"absent_{selected_car}_{mode_key}_{row['이름']}"
+                    
+                    is_boarded = st.session_state['check_status'].get(u_id, False)
+                    is_absent = st.session_state['check_status'].get(a_id, False)
+                    
+                    if is_boarded: boarded_count += 1
+                    if is_absent: absent_count += 1
+                    
+                    # 둘 중 하나라도 체크되어 있으면 '확인 완료'로 간주
+                    if is_boarded or is_absent:
+                        processed_count += 1
                 
-                progress_val = checked_count / total_count if total_count > 0 else 0
+                # 진행률 계산
+                progress_val = processed_count / total_count if total_count > 0 else 0
                 
                 st.write(f"### 🕒 {selected_car} {mode}")
                 st.progress(progress_val)
-                st.caption(f"🏁 **탑승 현황: {checked_count} / {total_count} 명 ({int(progress_val * 100)}%)**")
                 
-                st.markdown("---")
+                # 상세 현황 텍스트
+                status_html = f"""
+                <div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:15px;'>
+                    <b>📊 총원: {total_count}명</b> | 
+                    <span style='color:blue'>✅ 탑승: {boarded_count}</span> | 
+                    <span style='color:red'>❌ 결석: {absent_count}</span> | 
+                    <span style='color:gray'>⏳ 미확인: {total_count - processed_count}</span>
+                </div>
+                """
+                st.markdown(status_html, unsafe_allow_html=True)
 
-                # 카드 뷰 출력 (결석 체크 추가)
+                # 카드 뷰
                 for i, row in final_df.iterrows():
                     with st.container(border=True):
-                        # 3단 분리: 정보(6) | 탑승(2) | 결석(2)
                         c1, c2, c3 = st.columns([3, 1, 1])
                         
                         t_val = row[time_col] if time_col in row else "-"
@@ -310,25 +322,22 @@ elif menu == "🚍 차량 운행표":
                             st.markdown(f"📍 {l_val}")
                             
                         with c2:
-                            unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
-                            saved_val = st.session_state['check_status'].get(unique_id, False)
+                            u_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
+                            saved_val = st.session_state['check_status'].get(u_id, False)
                             st.write("") 
-                            # 탑승 체크
-                            is_checked = st.checkbox("✅ 탑승", value=saved_val, key=unique_id)
+                            is_checked = st.checkbox("✅ 탑승", value=saved_val, key=u_id)
                             if is_checked != saved_val:
-                                st.session_state['check_status'][unique_id] = is_checked
+                                st.session_state['check_status'][u_id] = is_checked
                                 st.rerun()
 
                         with c3:
-                            # 결석 체크
-                            absent_id = f"absent_{selected_car}_{mode_key}_{row['이름']}"
-                            absent_val = st.session_state['check_status'].get(absent_id, False)
+                            a_id = f"absent_{selected_car}_{mode_key}_{row['이름']}"
+                            absent_val = st.session_state['check_status'].get(a_id, False)
                             st.write("")
-                            # 결석 체크
-                            is_absent = st.checkbox("❌ 결석", value=absent_val, key=absent_id)
+                            is_absent = st.checkbox("❌ 결석", value=absent_val, key=a_id)
                             if is_absent != absent_val:
-                                st.session_state['check_status'][absent_id] = is_absent
-                                # 결석은 굳이 리런할 필요 없으나 데이터 저장을 위해 session 사용
+                                st.session_state['check_status'][a_id] = is_absent
+                                st.rerun()
             else:
                 st.info(f"조건에 맞는 탑승 인원이 없습니다.")
         else:
