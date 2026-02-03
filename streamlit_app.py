@@ -16,20 +16,26 @@ st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="�
 def get_korea_time():
     return datetime.utcnow() + timedelta(hours=9)
 
-# 구글 시트 연결
+# 구글 시트 연결 (캐시 사용)
 @st.cache_resource
 def get_gspread_client():
-    credentials = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
-    client = gspread.authorize(credentials)
-    return client
+    try:
+        credentials = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        client = gspread.authorize(credentials)
+        return client
+    except Exception as e:
+        st.error(f"구글 인증 실패: {e}")
+        return None
 
-# 데이터 읽어오기 (3초마다 갱신)
+# 데이터 읽어오기 (캐시 TTL 3초)
 @st.cache_data(ttl=3)
 def load_data_from_sheet(sheet_name):
     client = get_gspread_client()
+    if not client: return pd.DataFrame()
+    
     try:
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet(sheet_name)
@@ -37,36 +43,48 @@ def load_data_from_sheet(sheet_name):
         df = pd.DataFrame(data)
         df = df.astype(str) 
         return df
+    except gspread.exceptions.WorksheetNotFound:
+        # st.error(f"'{sheet_name}' 탭을 찾을 수 없습니다.") # 너무 자주 떠서 주석처리
+        return pd.DataFrame()
     except Exception as e:
         return pd.DataFrame()
 
-# [핵심] 데이터 쓰기 함수 (등원/하원/출석 공용)
+# [핵심] 데이터 쓰기 함수 (안전장치 추가됨)
 def update_check_status(student_name, col_name, status_value):
-    """
-    col_name: '등원확인', '하원확인', '출석확인' 중 하나
-    status_value: '탑승', '결석', '출석', ''(빈칸)
-    """
     client = get_gspread_client()
-    sh = client.open_by_key(SHEET_ID)
-    worksheet = sh.worksheet("0") # 원생명단 시트(GID 0인 첫번째 시트 가정)
-    
+    if not client: return
+
     try:
-        # 1. 이름 행 찾기
-        cell = worksheet.find(student_name)
-        row_num = cell.row
+        sh = client.open_by_key(SHEET_ID)
+        worksheet = sh.worksheet("원생명단") 
         
-        # 2. 컬럼 열 찾기
-        header_cell = worksheet.find(col_name)
-        col_num = header_cell.col
+        # 1. 이름 행 찾기 (없을 경우 예외 처리)
+        try:
+            cell = worksheet.find(student_name)
+            row_num = cell.row
+        except gspread.exceptions.CellNotFound:
+            st.toast(f"⚠️ 엑셀에 '{student_name}' 원생이 없습니다. 동기화가 필요합니다.", icon="🚨")
+            return
         
-        # 3. 업데이트
-        worksheet.update_cell(row_num, col_num, status_value)
+        # 2. 컬럼 열 찾기 (없을 경우 예외 처리)
+        try:
+            header_cell = worksheet.find(col_name)
+            col_num = header_cell.col
+        except gspread.exceptions.CellNotFound:
+            st.error(f"엑셀에 '{col_name}' 제목이 없습니다. 제목을 확인해주세요.")
+            return
         
-        # 4. 캐시 초기화 (즉시 반영)
-        st.cache_data.clear()
-        
+        # 3. 업데이트 (재시도 로직 포함)
+        try:
+            worksheet.update_cell(row_num, col_num, status_value)
+            st.cache_data.clear() # 즉시 갱신
+        except Exception as e:
+            time.sleep(1) # 1초 대기 후 재시도
+            worksheet.update_cell(row_num, col_num, status_value)
+            st.cache_data.clear()
+            
     except Exception as e:
-        st.error(f"저장 실패: {e}")
+        st.error(f"시스템 오류: {e}")
 
 # 데이터 로드
 df_students = load_data_from_sheet("원생명단") 
@@ -79,9 +97,17 @@ df_schedule = load_data_from_sheet("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 22.0 (Full Sync)**")
-    st.caption("✅ 차량/출석 실시간 연동됨")
-    st.markdown("---")
+    st.markdown("**System Ver 24.0 (Stable)**")
+    
+    # [NEW] 실시간 자동 갱신 스위치
+    st.write("---")
+    st.write("#### 📡 실시간 모드")
+    auto_refresh = st.toggle("자동 새로고침 (5초)", value=False)
+    if auto_refresh:
+        st.caption("⚡ 5초마다 데이터를 가져옵니다.")
+        time.sleep(5)
+        st.rerun()
+    st.write("---")
     
     menu = st.radio("메뉴 선택", [
         "🏠 홈 대시보드", 
@@ -95,7 +121,7 @@ with st.sidebar:
     ])
     
     st.markdown("---")
-    if st.button("🔄 데이터 새로고침"):
+    if st.button("🔄 수동 새로고침"):
         st.cache_data.clear()
         st.rerun()
 
@@ -105,6 +131,7 @@ with st.sidebar:
 
 # [1] 홈 대시보드
 if menu == "🏠 홈 대시보드":
+    # 자바스크립트 시계 (화면용)
     st.markdown(
         """
         <div style="text-align: right; font-size: 1.2em; font-weight: bold; color: #444; margin-bottom: 10px;">
@@ -133,6 +160,9 @@ if menu == "🏠 홈 대시보드":
 
     st.header("📢 오늘의 작전 브리핑")
     
+    if auto_refresh:
+        st.caption("🟢 실시간 업데이트 중...")
+
     if not df_notice.empty:
         try:
             recent_notices = df_notice.tail(10)
@@ -237,10 +267,8 @@ elif menu == "🔐 관리자 모드":
                     try:
                         client = get_gspread_client()
                         sh = client.open_by_key(SHEET_ID)
-                        ws = sh.worksheet("0") # 첫번째 시트
+                        ws = sh.worksheet("원생명단")
                         
-                        # 3개 컬럼(등원,하원,출석) 찾아서 내용 지우기
-                        # 안전하게 컬럼명으로 찾음
                         cols_to_clear = ["등원확인", "하원확인", "출석확인"]
                         ranges = []
                         
@@ -320,7 +348,6 @@ elif menu == "🚍 차량 운행표":
             </div>
             """, unsafe_allow_html=True)
             
-            # 카드 뷰
             for i, row in final_df.iterrows():
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([3, 1, 1])
@@ -354,7 +381,7 @@ elif menu == "🚍 차량 운행표":
     else:
         st.error("데이터 로드 실패")
 
-# [3] 수련부 출석 (실시간 연동 적용)
+# [3] 수련부 출석
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
@@ -366,19 +393,15 @@ elif menu == "📝 수련부 출석":
             st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
             cols = st.columns(3)
             
-            check_col = "출석확인" # 엑셀 컬럼명
+            check_col = "출석확인"
             
             for i, row in class_students.iterrows():
                 with cols[i % 3]:
-                    # DB에서 현재 상태 확인
                     current_val = row.get(check_col, '')
                     is_checked = (current_val == '출석')
                     
-                    # 체크박스 표시
-                    # key를 유니크하게 만들기 위해 이름+시간 조합
-                    new_check = st.checkbox(f"{row['이름']}", value=is_checked, key=f"att_{selected_class}_{i}")
+                    new_check = st.checkbox(f"{row['이름']}", value=is_checked, key=f"att_{selected_class}_{i}_{row['이름']}")
                     
-                    # 상태가 변했으면 DB 업데이트 (즉시 반영)
                     if new_check != is_checked:
                         new_status = '출석' if new_check else ''
                         update_check_status(row['이름'], check_col, new_status)
@@ -388,7 +411,7 @@ elif menu == "📝 수련부 출석":
     else:
         st.error("'수련부' 컬럼이 없습니다.")
 
-# [4] 기질 인사이트 (기존 유지)
+# [4] 기질 인사이트
 elif menu == "🔍 기질 인사이트":
     st.header("🔍 기질 검색")
     name = st.text_input("이름 입력")
@@ -407,7 +430,7 @@ elif menu == "🔍 기질 인사이트":
         else:
             st.error("없는 이름입니다.")
 
-# [5] 훈육 코치 (기존 유지)
+# [5] 훈육 코치
 elif menu == "💬 훈육 코치":
     st.header("💬 AI 훈육 코치")
     if not df_guide.empty:
@@ -417,7 +440,7 @@ elif menu == "💬 훈육 코치":
             guide = df_guide[df_guide['기질유형'] == sel].iloc[0]
             st.code(guide.get('훈육_스크립트', '데이터 없음'))
 
-# [6] 승급심사 (기존 유지)
+# [6] 승급심사
 elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사 현황")
     st.info("※ [심사일정] 탭의 데이터를 보여줍니다.")
@@ -434,7 +457,7 @@ elif menu == "📈 승급심사 관리":
     else:
         st.warning("등록된 심사 일정이 없습니다.")
 
-# [7] 이달의 생일 (기존 유지)
+# [7] 이달의 생일
 elif menu == "🎂 이달의 생일":
     kst_now = get_korea_time()
     this_month = kst_now.month
