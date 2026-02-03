@@ -28,13 +28,12 @@ def get_gspread_client():
         return None
 
 # ---------------------------------------------------------
-# [최적화 1] 자주 바뀌는 데이터 (원생명단) -> 5초마다 갱신 허용
+# [최적화 1] 자주 바뀌는 데이터 (원생명단) -> 5초 캐시
 # ---------------------------------------------------------
 @st.cache_data(ttl=5) 
 def load_fast_data():
     client = get_gspread_client()
     if not client: return pd.DataFrame()
-    
     try:
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet("원생명단")
@@ -42,23 +41,24 @@ def load_fast_data():
         df = pd.DataFrame(data)
         df = df.astype(str)
         return df
-    except Exception as e:
+    except:
         return pd.DataFrame()
 
 # ---------------------------------------------------------
-# [최적화 2] 잘 안 바뀌는 데이터 -> 10분(600초)마다 갱신
+# [최적화 2] 잘 안 바뀌는 데이터 -> 10분 캐시
 # ---------------------------------------------------------
 @st.cache_data(ttl=600)
 def load_slow_data(sheet_name):
     client = get_gspread_client()
     if not client: return pd.DataFrame()
-    
     try:
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet(sheet_name)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
-        df = df.astype(str)
+        rows = worksheet.get_all_values()
+        if len(rows) < 2: return pd.DataFrame() 
+        headers = rows[0]
+        data = rows[1:]
+        df = pd.DataFrame(data, columns=headers)
         return df
     except:
         return pd.DataFrame()
@@ -82,19 +82,18 @@ def update_check_status(student_name, col_name, status_value):
             load_fast_data.clear() 
             
         except gspread.exceptions.APIError as e:
-            if "429" in str(e): # 과속 방지
+            if "429" in str(e):
                 time.sleep(2)
                 worksheet.update_cell(row_num, col_num, status_value)
                 load_fast_data.clear()
-            else:
-                st.error(f"구글 오류: {e}")
         except Exception as e:
-            st.error(f"저장 실패: {e}")
-            
-    except Exception as e:
+            pass 
+    except:
         pass
 
+# ==========================================
 # 데이터 로드
+# ==========================================
 df_students = load_fast_data() 
 df_notice = load_slow_data("공지사항")
 df_guide = load_slow_data("기질가이드")
@@ -105,12 +104,11 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 27.0 (Simple)**")
+    st.markdown("**System Ver 29.0 (Color)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
     
-    # 10초 주기 자동 갱신
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
         st.caption("⚡ 10초마다 갱신 중...")
@@ -129,7 +127,7 @@ with st.sidebar:
     ])
     
     st.markdown("---")
-    if st.button("🔄 수동 새로고침"):
+    if st.button("🔄 데이터 전체 새로고침"):
         st.cache_data.clear()
         st.rerun()
 
@@ -139,7 +137,6 @@ with st.sidebar:
 
 # [1] 홈 대시보드
 if menu == "🏠 홈 대시보드":
-    # [수정됨] 실시간 시계 삭제 -> 깔끔한 날짜 표시로 변경
     now = get_korea_time()
     weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
     date_str = now.strftime("%m월 %d일")
@@ -159,31 +156,26 @@ if menu == "🏠 홈 대시보드":
     if auto_refresh:
         st.caption("🟢 실시간 업데이트 중...")
 
-    if not df_notice.empty:
-        try:
-            recent_notices = df_notice.tail(10)
-            weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
+    if not df_notice.empty and len(df_notice.columns) >= 2:
+        recent_notices = df_notice.tail(10)
+        for i, row in recent_notices.iloc[::-1].iterrows():
+            raw_date = str(row.iloc[0]).strip()
+            content = str(row.iloc[1]).strip()
             
-            for i, row in recent_notices.iloc[::-1].iterrows():
-                vals = list(row.values())
-                n_date_raw = vals[0]
-                n_content = vals[1]
-                
-                display_date = n_date_raw
-                try:
-                    dt_obj = pd.to_datetime(str(n_date_raw).replace('.', '-'), errors='coerce')
-                    if pd.notnull(dt_obj):
-                        w_str = weekdays[dt_obj.weekday()]
-                        display_date = f"{dt_obj.strftime('%m/%d')} {w_str}"
-                except:
-                    pass
-
-                if str(n_content).strip():
-                    st.info(f"**[{display_date}]** {n_content}")
-        except:
-             pass 
+            if not content: continue
+            
+            display_date = raw_date
+            try:
+                dt_obj = pd.to_datetime(raw_date.replace('.', '-'), errors='coerce')
+                if pd.notnull(dt_obj):
+                    w_str = weekdays[dt_obj.weekday()]
+                    display_date = f"{dt_obj.strftime('%m/%d')} {w_str}"
+            except:
+                pass 
+            st.info(f"**[{display_date}]** {content}")
+            
     else:
-        st.info("등록된 공지사항이 없습니다.")
+        st.info("등록된 공지사항이 없거나 불러오지 못했습니다.")
 
     st.markdown("---")
     
@@ -289,7 +281,7 @@ elif menu == "🔐 관리자 모드":
     elif admin_pw:
         st.error("비밀번호가 틀렸습니다.")
 
-# [2] 차량 운행표
+# [2] 차량 운행표 (색상 적용)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
@@ -344,12 +336,25 @@ elif menu == "🚍 차량 운행표":
             </div>
             """, unsafe_allow_html=True)
             
+            # [핵심] 카드 뷰 생성 (상태에 따라 다른 컨테이너 사용)
             for i, row in final_df.iterrows():
-                with st.container(border=True):
+                current_status = row.get(check_col, '')
+                
+                # 1. 탑승 완료: 초록색(success) 박스
+                if current_status == '탑승':
+                    box_context = st.success
+                # 2. 결석: 빨간색(error) 박스
+                elif current_status == '결석':
+                    box_context = st.error
+                # 3. 미확인: 기본 박스(container)
+                else:
+                    box_context = None # 아래에서 처리
+
+                # 박스 그리기
+                def draw_content():
                     c1, c2, c3 = st.columns([3, 1, 1])
                     t_val = row[time_col] if time_col in row else "-"
                     l_val = row[loc_col] if loc_col in row else "-"
-                    current_status = row.get(check_col, '')
                     
                     with c1:
                         st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
@@ -372,6 +377,15 @@ elif menu == "🚍 차량 운행표":
                             if st.button("결석", key=f"btn_a_{i}"):
                                 update_check_status(row['이름'], check_col, '결석')
                                 st.rerun()
+
+                # 컨테이너 종류에 따라 그리기 실행
+                if box_context:
+                    with box_context():
+                        draw_content()
+                else:
+                    with st.container(border=True):
+                        draw_content()
+
         else:
             st.info("해당 차량에 탑승하는 인원이 없습니다.")
     else:
