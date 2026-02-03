@@ -38,11 +38,11 @@ df_guide = load_data(gid_guide)
 df_schedule = load_data(gid_schedule)
 
 # ==========================================
-# 2. 사이드바 메뉴 (보안 기능 추가)
+# 2. 사이드바 메뉴
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 12.0 (Secure)**")
+    st.markdown("**System Ver 14.0 (Fix)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -58,18 +58,23 @@ with st.sidebar:
     st.markdown("---")
     st.caption(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
     
-    # [NEW] 관리자 비밀번호 기능
+    # [일반용] 데이터만 새로고침 (체크박스 유지)
+    if st.button("🔄 데이터 새로고침"):
+        st.cache_data.clear()
+        st.rerun()
+        
+    st.markdown("---")
+
+    # [관리자용] 완전 초기화 (체크박스 삭제)
     st.markdown("### 🔐 관리자 메뉴")
     admin_pw = st.text_input("비밀번호 입력", type="password", key="admin_pw")
     
     if admin_pw == "0577":
-        if st.button("🔄 하루 시작 (초기화)"):
+        if st.button("🔥 하루 시작 (완전 초기화)"):
             st.session_state['check_status'] = {} 
             st.cache_data.clear()
             st.rerun()
         st.success("관리자 인증됨")
-    elif admin_pw:
-        st.error("비밀번호가 틀렸습니다.")
 
 # ==========================================
 # 3. 기능 구현
@@ -89,17 +94,27 @@ if menu == "🏠 홈 대시보드":
                 if n_content.strip():
                     st.info(f"**[{n_date}]** {n_content}")
         except:
-            st.warning("공지사항을 불러오는 중 오류가 발생했습니다.")
+            st.warning("공지사항 데이터 오류")
     else:
         st.info("등록된 공지사항이 없습니다.")
 
     st.markdown("---")
     
-    today = datetime.now().strftime("%Y-%m-%d")
+    # [수정됨] 심사 일정 날짜 인식 강화
+    today_dt = datetime.now().date()
     
     if not df_schedule.empty:
         date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
-        today_test = df_schedule[df_schedule[date_col].fillna('').astype(str).str.strip() == today]
+        
+        # 1. 날짜 정제 (공백 제거 및 숫자/하이픈만 남기기)
+        # 예: "2026. 2. 4" -> "202624" (X) -> 좀 더 안전하게 to_datetime에 맡기되 공백제거
+        df_schedule['clean_date'] = df_schedule[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
+        
+        # 2. 날짜 객체로 변환
+        df_schedule['smart_date'] = pd.to_datetime(df_schedule['clean_date'], errors='coerce').dt.date
+        
+        # 3. 오늘 날짜와 비교
+        today_test = df_schedule[df_schedule['smart_date'] == today_dt]
         
         if not today_test.empty:
             st.error(f"🔥 **오늘 승급심사: {len(today_test)}명**")
@@ -166,15 +181,13 @@ elif menu == "🚍 차량 운행표":
     else:
         st.error("데이터를 불러오지 못했습니다.")
 
-# [3] 수련부 출석 (가나다순 정렬 적용)
+# [3] 수련부 출석
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
         class_list = sorted(df_students['수련부'].dropna().unique().tolist())
         if class_list:
             selected_class = st.selectbox("수련 시간 선택", class_list)
-            
-            # [수정됨] 이름 기준 오름차순(가나다순) 정렬
             class_students = df_students[df_students['수련부'] == selected_class].sort_values(by='이름')
             
             st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
@@ -228,15 +241,17 @@ elif menu == "📈 승급심사 관리":
     if not df_schedule.empty:
         target_df = df_schedule.copy()
         date_col = '날짜' if '날짜' in target_df.columns else target_df.columns[0]
-        try:
-            target_df = target_df.sort_values(by=date_col)
-        except:
-            pass
-        st.dataframe(target_df, use_container_width=True, hide_index=True)
+        
+        # 스마트 정렬 (날짜로 인식)
+        target_df['clean_date'] = target_df[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
+        target_df['sort_date'] = pd.to_datetime(target_df['clean_date'], errors='coerce')
+        target_df = target_df.sort_values(by='sort_date')
+        
+        st.dataframe(target_df.drop(columns=['clean_date', 'sort_date'], errors='ignore'), use_container_width=True, hide_index=True)
     else:
         st.warning("등록된 심사 일정이 없습니다.")
 
-# [7] 이달의 생일 (날짜순 정렬 적용)
+# [7] 이달의 생일 (일 기준 정렬)
 elif menu == "🎂 이달의 생일":
     st.header("🎂 이달의 생일자")
     this_month = datetime.now().month
@@ -250,8 +265,9 @@ elif menu == "🎂 이달의 생일":
         b_kids = df_students[df_students['temp_date'].dt.month == this_month]
         
         if not b_kids.empty:
-            # [수정됨] 날짜 기준 오름차순 정렬
-            b_kids = b_kids.sort_values(by='temp_date')
+            # [수정됨] 일(Day)만 뽑아서 정렬 (연도 무시)
+            b_kids['day_only'] = b_kids['temp_date'].dt.day
+            b_kids = b_kids.sort_values(by='day_only')
             
             st.balloons()
             for i, row in b_kids.iterrows():
