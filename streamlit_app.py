@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import time
 
 # ==========================================
 # [설정] 관장님의 데이터 주소
@@ -22,9 +23,7 @@ st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="�
 if 'check_status' not in st.session_state:
     st.session_state['check_status'] = {}
 
-# [핵심] 한국 시간(KST) 구하기 함수
 def get_korea_time():
-    # UTC 시간에서 9시간을 더해 한국 시간을 만듭니다.
     return datetime.utcnow() + timedelta(hours=9)
 
 @st.cache_data(ttl=0)
@@ -32,7 +31,7 @@ def load_data(gid):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     try:
         df = pd.read_csv(url, dtype=str)
-        df.columns = df.columns.str.strip() # 공백 제거
+        df.columns = df.columns.str.strip()
         return df
     except:
         return pd.DataFrame()
@@ -47,7 +46,7 @@ df_schedule = load_data(gid_schedule)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 15.0 (KST)**")
+    st.markdown("**System Ver 17.0 (Safety Bar)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -62,17 +61,12 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # 한국 시간 기준 접속일 표시
-    kst_now = get_korea_time()
-    st.caption(f"접속: {kst_now.strftime('%Y-%m-%d %H:%M')}")
-    
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
         
     st.markdown("---")
 
-    # 관리자 메뉴
     st.markdown("### 🔐 관리자 메뉴")
     admin_pw = st.text_input("비밀번호 입력", type="password", key="admin_pw")
     
@@ -89,81 +83,104 @@ with st.sidebar:
 
 # [1] 홈 대시보드
 if menu == "🏠 홈 대시보드":
-    # [NEW] 우측 상단 날짜 표시 (컬럼 분할)
-    col_title, col_date = st.columns([3, 1])
+    # 실시간 시계
+    st.markdown(
+        """
+        <div style="text-align: right; font-size: 1.2em; font-weight: bold; color: #444; margin-bottom: 10px;">
+            🕒 현재 시간: <span id="clock"></span>
+        </div>
+        <script>
+        function startTime() {
+            const today = new Date();
+            let h = today.getHours();
+            let m = today.getMinutes();
+            let s = today.getSeconds();
+            m = checkTime(m);
+            s = checkTime(s);
+            document.getElementById('clock').innerHTML =  h + ":" + m + ":" + s;
+            setTimeout(startTime, 1000);
+        }
+        function checkTime(i) {
+            if (i < 10) {i = "0" + i};
+            return i;
+        }
+        startTime();
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.header("📢 오늘의 작전 브리핑")
+    st.caption("최근 등록된 공지사항 10개가 표시됩니다.")
     
-    with col_title:
-        st.header("📢 오늘의 작전 브리핑")
-    with col_date:
-        # 한국 시간으로 날짜 표시
-        kst_today_str = get_korea_time().strftime("%Y년 %m월 %d일 (%a)")
-        st.markdown(f"<h3 style='text-align: right; color: gray;'>{kst_today_str}</h3>", unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # 1. 공지사항 (최신 3개)
+    # [NEW] 공지사항 10개 + 요일 표시 기능
     if not df_notice.empty:
         try:
-            recent_notices = df_notice.tail(3)
+            # 1. 최근 10개 가져오기
+            recent_notices = df_notice.tail(10)
+            
+            # 2. 요일 리스트 (한국어)
+            weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
+            
             for i, row in recent_notices.iloc[::-1].iterrows():
-                n_date = row[0] if pd.notna(row[0]) else "-"
+                n_date_raw = row[0] if pd.notna(row[0]) else "-"
                 n_content = row[1] if pd.notna(row[1]) else ""
+                
+                # 요일 계산 로직
+                display_date = n_date_raw
+                try:
+                    # 날짜 형식으로 변환 시도
+                    dt_obj = pd.to_datetime(str(n_date_raw).replace('.', '-'), errors='coerce')
+                    if pd.notnull(dt_obj):
+                        # 요일 붙이기 (YYYY-MM-DD (요일))
+                        w_str = weekdays[dt_obj.weekday()]
+                        display_date = f"{dt_obj.strftime('%m/%d')} {w_str}"
+                except:
+                    pass # 변환 실패하면 그냥 원래 글자대로 출력
+
                 if n_content.strip():
-                    st.info(f"**[{n_date}]** {n_content}")
+                    st.info(f"**[{display_date}]** {n_content}")
         except:
-            st.warning("공지사항 로드 실패")
+            st.warning("공지사항 데이터 오류")
     else:
         st.info("등록된 공지사항이 없습니다.")
 
-    # 2. 오늘 심사 및 생일 (2단 분리)
-    c1, c2 = st.columns(2)
+    st.markdown("---")
     
-    # 한국 날짜 기준
-    kst_date = get_korea_time().date()
+    today_dt = get_korea_time().date()
     
-    with c1:
-        st.subheader("🔥 오늘 승급심사")
-        if not df_schedule.empty:
-            date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
-            
-            # 날짜 정제 및 한국 시간 비교
-            df_schedule['clean_date'] = df_schedule[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
-            df_schedule['smart_date'] = pd.to_datetime(df_schedule['clean_date'], errors='coerce').dt.date
-            
-            today_test = df_schedule[df_schedule['smart_date'] == kst_date]
-            
-            if not today_test.empty:
-                st.error(f"**총 {len(today_test)}명**")
-                for i, row in today_test.iterrows():
-                    name_val = row['이름'] if '이름' in row else row.iloc[1]
-                    st.write(f"- {name_val}")
-            else:
-                st.success("일정 없음")
-        else:
-            st.write("데이터 없음")
-
-    with c2:
-        st.subheader("🎂 오늘 생일")
-        birth_col = '생일' if '생일' in df_students.columns else '생년월일'
+    if not df_schedule.empty:
+        date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
+        df_schedule['clean_date'] = df_schedule[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
+        df_schedule['smart_date'] = pd.to_datetime(df_schedule['clean_date'], errors='coerce').dt.date
         
-        if not df_students.empty and birth_col in df_students.columns:
-            df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
-            df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
-            
-            # 월, 일이 오늘(한국시간)과 똑같은지 확인
-            today_birth = df_students[
-                (df_students['temp_date'].dt.month == kst_date.month) & 
-                (df_students['temp_date'].dt.day == kst_date.day)
-            ]
-            
-            if not today_birth.empty:
-                st.balloons() # 생일자 있으면 풍선!
-                for i, row in today_birth.iterrows():
-                    st.warning(f"🎉 **{row['이름']}**")
-            else:
-                st.info("생일자 없음")
+        today_test = df_schedule[df_schedule['smart_date'] == today_dt]
+        
+        if not today_test.empty:
+            st.error(f"🔥 **오늘 승급심사: {len(today_test)}명**")
+            for i, row in today_test.iterrows():
+                name_val = row['이름'] if '이름' in row else row.iloc[1]
+                st.write(f" - **{name_val}** (화이팅!)")
         else:
-            st.write("데이터 없음")
+            st.success("✅ 오늘 예정된 심사는 없습니다.")
+    else:
+        st.info("심사 일정 데이터가 없습니다.")
+        
+    birth_col = '생일' if '생일' in df_students.columns else '생년월일'
+    if not df_students.empty and birth_col in df_students.columns:
+        df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
+        df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
+        
+        today_birth = df_students[
+            (df_students['temp_date'].dt.month == today_dt.month) & 
+            (df_students['temp_date'].dt.day == today_dt.day)
+        ]
+        
+        if not today_birth.empty:
+            st.markdown("---")
+            st.subheader("🎂 오늘 생일 축하합니다!")
+            for i, row in today_birth.iterrows():
+                st.warning(f"🎉 **{row['이름']}**")
 
 # [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
@@ -198,21 +215,46 @@ elif menu == "🚍 차량 운행표":
                 if time_col in final_df.columns:
                     final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
                 
-                st.write(f"### 🕒 {selected_car} {mode} ({len(final_df)}명)")
+                # [NEW] 진행률 계산 로직
+                total_count = len(final_df)
+                checked_count = 0
                 
+                # 먼저 한 번 훑어서 몇 명이 체크되었는지 확인
                 for i, row in final_df.iterrows():
-                    c1, c2, c3, c4 = st.columns([2, 2, 3, 1])
-                    t_val = row[time_col] if time_col in row else "-"
-                    l_val = row[loc_col] if loc_col in row else "-"
-                    
-                    c1.write(f"**{t_val}**")
-                    c2.write(f"**{row['이름']}**")
-                    c3.write(f"{l_val}")
-                    
                     unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
-                    saved_val = st.session_state['check_status'].get(unique_id, False)
-                    is_checked = c4.checkbox("확인", value=saved_val, key=unique_id)
-                    st.session_state['check_status'][unique_id] = is_checked
+                    if st.session_state['check_status'].get(unique_id, False):
+                        checked_count += 1
+                
+                # 진행률 바 표시
+                progress_val = checked_count / total_count if total_count > 0 else 0
+                st.write(f"### 🕒 {selected_car} {mode}")
+                
+                # 초록색 진행 바
+                st.progress(progress_val)
+                st.caption(f"🏁 **탑승 현황: {checked_count} / {total_count} 명 ({int(progress_val * 100)}%)**")
+                
+                st.markdown("---")
+
+                # 카드 뷰 출력
+                for i, row in final_df.iterrows():
+                    with st.container(border=True):
+                        c1, c2 = st.columns([3, 1])
+                        
+                        t_val = row[time_col] if time_col in row else "-"
+                        l_val = row[loc_col] if loc_col in row else "-"
+                        
+                        with c1:
+                            st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
+                            st.markdown(f"📍 {l_val}")
+                            
+                        with c2:
+                            unique_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
+                            saved_val = st.session_state['check_status'].get(unique_id, False)
+                            st.write("") 
+                            
+                            # 체크박스를 누르면 session_state가 바뀌고, 화면이 리로드되면서 위의 진행률도 바뀝니다.
+                            is_checked = st.checkbox("탑승", value=saved_val, key=unique_id)
+                            st.session_state['check_status'][unique_id] = is_checked
             else:
                 st.info(f"조건에 맞는 탑승 인원이 없습니다.")
         else:
