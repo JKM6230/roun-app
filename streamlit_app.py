@@ -1,52 +1,86 @@
 import streamlit as st
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import time
 
 # ==========================================
-# [설정] 관장님의 데이터 주소
+# [설정] 구글 시트 연동 (실시간 DB 모드)
 # ==========================================
-sheet_id = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
+SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
-# 탭별 고유 번호 (GID)
-gid_students = "0"            # 원생명단
-gid_notice = "1622401395"     # 공지사항
-gid_guide = "1774705614"      # 기질가이드
-gid_attendance = "244532436"  # 출석부
-gid_schedule = "538477435"    # 심사일정
-
-# ==========================================
-# 1. 데이터 로드 엔진
-# ==========================================
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-if 'check_status' not in st.session_state:
-    st.session_state['check_status'] = {}
-
+# 한국 시간 구하기
 def get_korea_time():
     return datetime.utcnow() + timedelta(hours=9)
 
-@st.cache_data(ttl=0)
-def load_data(gid):
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+# 구글 시트 연결
+@st.cache_resource
+def get_gspread_client():
+    credentials = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    client = gspread.authorize(credentials)
+    return client
+
+# 데이터 읽어오기 (3초마다 갱신)
+@st.cache_data(ttl=3)
+def load_data_from_sheet(sheet_name):
+    client = get_gspread_client()
     try:
-        df = pd.read_csv(url, dtype=str)
-        df.columns = df.columns.str.strip()
+        sh = client.open_by_key(SHEET_ID)
+        worksheet = sh.worksheet(sheet_name)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        df = df.astype(str) 
         return df
-    except:
+    except Exception as e:
         return pd.DataFrame()
 
-df_students = load_data(gid_students)
-df_notice = load_data(gid_notice)
-df_guide = load_data(gid_guide)
-df_schedule = load_data(gid_schedule)
+# [핵심] 데이터 쓰기 함수 (등원/하원/출석 공용)
+def update_check_status(student_name, col_name, status_value):
+    """
+    col_name: '등원확인', '하원확인', '출석확인' 중 하나
+    status_value: '탑승', '결석', '출석', ''(빈칸)
+    """
+    client = get_gspread_client()
+    sh = client.open_by_key(SHEET_ID)
+    worksheet = sh.worksheet("0") # 원생명단 시트(GID 0인 첫번째 시트 가정)
+    
+    try:
+        # 1. 이름 행 찾기
+        cell = worksheet.find(student_name)
+        row_num = cell.row
+        
+        # 2. 컬럼 열 찾기
+        header_cell = worksheet.find(col_name)
+        col_num = header_cell.col
+        
+        # 3. 업데이트
+        worksheet.update_cell(row_num, col_num, status_value)
+        
+        # 4. 캐시 초기화 (즉시 반영)
+        st.cache_data.clear()
+        
+    except Exception as e:
+        st.error(f"저장 실패: {e}")
+
+# 데이터 로드
+df_students = load_data_from_sheet("원생명단") 
+df_notice = load_data_from_sheet("공지사항")
+df_guide = load_data_from_sheet("기질가이드")
+df_schedule = load_data_from_sheet("심사일정")
 
 # ==========================================
 # 2. 사이드바 메뉴
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 20.0 (Perfect)**")
+    st.markdown("**System Ver 22.0 (Full Sync)**")
+    st.caption("✅ 차량/출석 실시간 연동됨")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -61,7 +95,6 @@ with st.sidebar:
     ])
     
     st.markdown("---")
-    
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
@@ -106,8 +139,9 @@ if menu == "🏠 홈 대시보드":
             weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
             
             for i, row in recent_notices.iloc[::-1].iterrows():
-                n_date_raw = row[0] if pd.notna(row[0]) else "-"
-                n_content = row[1] if pd.notna(row[1]) else ""
+                vals = list(row.values())
+                n_date_raw = vals[0]
+                n_content = vals[1]
                 
                 display_date = n_date_raw
                 try:
@@ -118,10 +152,10 @@ if menu == "🏠 홈 대시보드":
                 except:
                     pass
 
-                if n_content.strip():
+                if str(n_content).strip():
                     st.info(f"**[{display_date}]** {n_content}")
         except:
-            st.warning("공지사항 데이터 오류")
+             pass 
     else:
         st.info("등록된 공지사항이 없습니다.")
 
@@ -130,7 +164,9 @@ if menu == "🏠 홈 대시보드":
     today_dt = get_korea_time().date()
     
     if not df_schedule.empty:
-        date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
+        date_col = df_schedule.columns[0]
+        name_col = df_schedule.columns[1] if len(df_schedule.columns) > 1 else df_schedule.columns[0]
+        
         df_schedule['clean_date'] = df_schedule[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
         df_schedule['smart_date'] = pd.to_datetime(df_schedule['clean_date'], errors='coerce').dt.date
         
@@ -139,13 +175,10 @@ if menu == "🏠 홈 대시보드":
         if not today_test.empty:
             st.error(f"🔥 **오늘 승급심사: {len(today_test)}명**")
             for i, row in today_test.iterrows():
-                name_val = row['이름'] if '이름' in row else row.iloc[1]
-                st.write(f" - **{name_val}** (화이팅!)")
+                st.write(f" - **{row[name_col]}** (화이팅!)")
         else:
             st.success("✅ 오늘 예정된 심사는 없습니다.")
-    else:
-        st.info("심사 일정 데이터가 없습니다.")
-        
+            
     birth_col = '생일' if '생일' in df_students.columns else '생년월일'
     if not df_students.empty and birth_col in df_students.columns:
         df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
@@ -185,61 +218,54 @@ elif menu == "🔐 관리자 모드":
                     cls_time = s_data.get('수련부', '-')
                     g_type = s_data.get('기질유형', '미검사')
                     phone_1 = s_data.get('보호자연락처', '-')
-                    phone_2 = s_data.get('기타보호자연락처', '-')
                     in_car = s_data.get('등원차량', '-')
                     in_time = s_data.get('등원시간', '-')
-                    in_loc = s_data.get('등원장소', '-')
-                    out_car = s_data.get('하원차량', '-')
-                    out_time = s_data.get('하원시간', '-')
-                    out_loc = s_data.get('하원장소', '-')
-
-                    st.markdown("---")
-                    c1, c2 = st.columns([1, 1])
-                    with c1:
-                        st.subheader(f"🥋 {s_data['이름']}")
-                        st.write(f"**수련부:** {cls_time}")
-                        st.write(f"**현재급:** {level}")
-                        st.info(f"**기질:** {g_type}")
-                    with c2:
-                        st.subheader("📞 비상 연락망")
-                        st.write(f"**보호자:** {phone_1}")
-                        st.write(f"**기타:** {phone_2}")
                     
-                    st.markdown("---")
-                    st.subheader("🚍 차량 이용 정보")
-                    tc1, tc2 = st.columns(2)
-                    with tc1:
-                        st.write("🔵 **등원**")
-                        st.write(f"- {in_car} / {in_time}")
-                        st.write(f"- {in_loc}")
-                    with tc2:
-                        st.write("🟠 **하원**")
-                        st.write(f"- {out_car} / {out_time}")
-                        st.write(f"- {out_loc}")
-                        
-                    if not df_guide.empty and g_type != '미검사':
-                        st.markdown("---")
-                        guide_match = df_guide[df_guide['기질유형'] == g_type]
-                        if not guide_match.empty:
-                            g_row = guide_match.iloc[0]
-                            with st.expander(f"💡 {g_type} 지도 가이드 보기"):
-                                st.write(f"**특징:** {g_row.get('핵심특징', '-')}")
-                                st.write(f"**지도법:** {g_row.get('지도_DO(해라)', '-')}")
+                    st.markdown(f"### 🥋 {s_data['이름']}")
+                    st.write(f"**정보:** {level} | {cls_time}부 | {g_type}")
+                    st.write(f"**연락처:** {phone_1}")
+                    st.write(f"**차량:** 등원({in_car}/{in_time})")
+
                 else:
                     st.error("검색된 원생이 없습니다.")
         
         with tab2:
             st.subheader("데이터 초기화")
-            st.warning("경고: 이 버튼을 누르면 모든 체크 상태가 사라집니다.")
-            if st.button("🔥 하루 시작 (모든 체크 삭제)"):
-                st.session_state['check_status'] = {} 
-                st.cache_data.clear()
-                st.rerun()
+            st.warning("⚠️ 하루 일과가 끝나면 눌러주세요. (등원/하원/출석 기록을 모두 지웁니다)")
+            if st.button("🔥 하루 마감 (전체 삭제)"):
+                with st.spinner("구글 시트 청소 중..."):
+                    try:
+                        client = get_gspread_client()
+                        sh = client.open_by_key(SHEET_ID)
+                        ws = sh.worksheet("0") # 첫번째 시트
+                        
+                        # 3개 컬럼(등원,하원,출석) 찾아서 내용 지우기
+                        # 안전하게 컬럼명으로 찾음
+                        cols_to_clear = ["등원확인", "하원확인", "출석확인"]
+                        ranges = []
+                        
+                        for c_name in cols_to_clear:
+                            try:
+                                cell = ws.find(c_name)
+                                col_letter = gspread.utils.rowcol_to_a1(1, cell.col).replace('1', '')
+                                ranges.append(f"{col_letter}2:{col_letter}1000")
+                            except:
+                                pass
+                        
+                        if ranges:
+                            ws.batch_clear(ranges)
+                            st.success("모든 체크 기록이 초기화되었습니다.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("초기화할 컬럼을 찾지 못했습니다.")
+                    except Exception as e:
+                        st.error(f"오류 발생: {e}")
                 
     elif admin_pw:
         st.error("비밀번호가 틀렸습니다.")
 
-# [2] 차량 운행표 (로직 개선됨)
+# [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
@@ -249,103 +275,86 @@ elif menu == "🚍 차량 운행표":
         veh_col = '등원차량'
         time_col = '등원시간'
         loc_col = '등원장소'
-        mode_key = "in"
+        check_col = '등원확인'
     else:
         veh_col = '하원차량'
         time_col = '하원시간'
         loc_col = '하원장소'
-        mode_key = "out"
+        check_col = '하원확인'
 
-    if not df_students.empty:
-        if veh_col in df_students.columns:
-            target = df_students[df_students[veh_col].notna() & (df_students[veh_col] != '')]
+    if not df_students.empty and veh_col in df_students.columns:
+        target = df_students[df_students[veh_col].notna() & (df_students[veh_col] != '')]
+        if '차량이용여부' in df_students.columns:
+            target = target[target['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
+        
+        if not target.empty:
+            car_list = sorted(target[veh_col].unique().tolist())
+            selected_car = st.selectbox("배차 선택", car_list)
             
-            if '차량이용여부' in df_students.columns:
-                target = target[target['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
+            final_df = target[target[veh_col] == selected_car]
             
-            if not target.empty:
-                car_list = sorted(target[veh_col].unique().tolist())
-                selected_car = st.selectbox("배차 선택", car_list)
-                
-                final_df = target[target[veh_col] == selected_car]
-                
-                if time_col in final_df.columns:
-                    final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
-                
-                # [핵심 수정] 진행률 로직: 탑승 OR 결석이면 '확인 완료'
-                total_count = len(final_df)
-                processed_count = 0  # 처리된 인원 (탑승 + 결석)
-                boarded_count = 0    # 실제 탑승 인원
-                absent_count = 0     # 결석 인원
-
-                for _, row in final_df.iterrows():
-                    u_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
-                    a_id = f"absent_{selected_car}_{mode_key}_{row['이름']}"
+            if time_col in final_df.columns:
+                final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
+            
+            # 진행률 계산 (DB 기준)
+            total_count = len(final_df)
+            boarded_count = 0
+            absent_count = 0
+            
+            if check_col in final_df.columns:
+                boarded_count = len(final_df[final_df[check_col] == '탑승'])
+                absent_count = len(final_df[final_df[check_col] == '결석'])
+            
+            processed_count = boarded_count + absent_count
+            progress_val = processed_count / total_count if total_count > 0 else 0
+            
+            st.write(f"### 🕒 {selected_car} {mode}")
+            st.progress(progress_val)
+            
+            st.markdown(f"""
+            <div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:15px;'>
+                <b>📊 총원: {total_count}명</b> | 
+                <span style='color:blue'>✅ 탑승: {boarded_count}</span> | 
+                <span style='color:red'>❌ 결석: {absent_count}</span> | 
+                <span style='color:gray'>⏳ 미확인: {total_count - processed_count}</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # 카드 뷰
+            for i, row in final_df.iterrows():
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    t_val = row[time_col] if time_col in row else "-"
+                    l_val = row[loc_col] if loc_col in row else "-"
+                    current_status = row.get(check_col, '')
                     
-                    is_boarded = st.session_state['check_status'].get(u_id, False)
-                    is_absent = st.session_state['check_status'].get(a_id, False)
-                    
-                    if is_boarded: boarded_count += 1
-                    if is_absent: absent_count += 1
-                    
-                    # 둘 중 하나라도 체크되어 있으면 '확인 완료'로 간주
-                    if is_boarded or is_absent:
-                        processed_count += 1
-                
-                # 진행률 계산
-                progress_val = processed_count / total_count if total_count > 0 else 0
-                
-                st.write(f"### 🕒 {selected_car} {mode}")
-                st.progress(progress_val)
-                
-                # 상세 현황 텍스트
-                status_html = f"""
-                <div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:15px;'>
-                    <b>📊 총원: {total_count}명</b> | 
-                    <span style='color:blue'>✅ 탑승: {boarded_count}</span> | 
-                    <span style='color:red'>❌ 결석: {absent_count}</span> | 
-                    <span style='color:gray'>⏳ 미확인: {total_count - processed_count}</span>
-                </div>
-                """
-                st.markdown(status_html, unsafe_allow_html=True)
-
-                # 카드 뷰
-                for i, row in final_df.iterrows():
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns([3, 1, 1])
-                        
-                        t_val = row[time_col] if time_col in row else "-"
-                        l_val = row[loc_col] if loc_col in row else "-"
-                        
-                        with c1:
-                            st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
-                            st.markdown(f"📍 {l_val}")
-                            
-                        with c2:
-                            u_id = f"car_{selected_car}_{mode_key}_{row['이름']}"
-                            saved_val = st.session_state['check_status'].get(u_id, False)
-                            st.write("") 
-                            is_checked = st.checkbox("✅ 탑승", value=saved_val, key=u_id)
-                            if is_checked != saved_val:
-                                st.session_state['check_status'][u_id] = is_checked
+                    with c1:
+                        st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
+                        st.markdown(f"📍 {l_val}")
+                    with c2:
+                        if current_status == '탑승':
+                            if st.button("✅ 완료", key=f"btn_b_{i}"):
+                                update_check_status(row['이름'], check_col, '')
                                 st.rerun()
-
-                        with c3:
-                            a_id = f"absent_{selected_car}_{mode_key}_{row['이름']}"
-                            absent_val = st.session_state['check_status'].get(a_id, False)
-                            st.write("")
-                            is_absent = st.checkbox("❌ 결석", value=absent_val, key=a_id)
-                            if is_absent != absent_val:
-                                st.session_state['check_status'][a_id] = is_absent
+                        else:
+                            if st.button("탑승", key=f"btn_b_{i}"):
+                                update_check_status(row['이름'], check_col, '탑승')
                                 st.rerun()
-            else:
-                st.info(f"조건에 맞는 탑승 인원이 없습니다.")
+                    with c3:
+                        if current_status == '결석':
+                             if st.button("❌ 완료", key=f"btn_a_{i}"):
+                                update_check_status(row['이름'], check_col, '')
+                                st.rerun()
+                        else:
+                            if st.button("결석", key=f"btn_a_{i}"):
+                                update_check_status(row['이름'], check_col, '결석')
+                                st.rerun()
         else:
-            st.error(f"🚨 엑셀에 **'{veh_col}'** 이라는 제목이 없습니다.")
+            st.info("해당 차량에 탑승하는 인원이 없습니다.")
     else:
-        st.error("데이터를 불러오지 못했습니다.")
+        st.error("데이터 로드 실패")
 
-# [3] 수련부 출석
+# [3] 수련부 출석 (실시간 연동 적용)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
@@ -357,20 +366,29 @@ elif menu == "📝 수련부 출석":
             st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
             cols = st.columns(3)
             
+            check_col = "출석확인" # 엑셀 컬럼명
+            
             for i, row in class_students.iterrows():
                 with cols[i % 3]:
-                    unique_id = f"att_{selected_class}_{row['이름']}"
-                    saved_val = st.session_state['check_status'].get(unique_id, False)
-                    is_checked = st.checkbox(f"{row['이름']}", value=saved_val, key=unique_id)
+                    # DB에서 현재 상태 확인
+                    current_val = row.get(check_col, '')
+                    is_checked = (current_val == '출석')
                     
-                    if is_checked != saved_val:
-                        st.session_state['check_status'][unique_id] = is_checked
+                    # 체크박스 표시
+                    # key를 유니크하게 만들기 위해 이름+시간 조합
+                    new_check = st.checkbox(f"{row['이름']}", value=is_checked, key=f"att_{selected_class}_{i}")
+                    
+                    # 상태가 변했으면 DB 업데이트 (즉시 반영)
+                    if new_check != is_checked:
+                        new_status = '출석' if new_check else ''
+                        update_check_status(row['이름'], check_col, new_status)
+                        st.rerun()
         else:
             st.info("수련부 데이터가 없습니다.")
     else:
         st.error("'수련부' 컬럼이 없습니다.")
 
-# [4] 기질 인사이트
+# [4] 기질 인사이트 (기존 유지)
 elif menu == "🔍 기질 인사이트":
     st.header("🔍 기질 검색")
     name = st.text_input("이름 입력")
@@ -389,7 +407,7 @@ elif menu == "🔍 기질 인사이트":
         else:
             st.error("없는 이름입니다.")
 
-# [5] 훈육 코치
+# [5] 훈육 코치 (기존 유지)
 elif menu == "💬 훈육 코치":
     st.header("💬 AI 훈육 코치")
     if not df_guide.empty:
@@ -399,7 +417,7 @@ elif menu == "💬 훈육 코치":
             guide = df_guide[df_guide['기질유형'] == sel].iloc[0]
             st.code(guide.get('훈육_스크립트', '데이터 없음'))
 
-# [6] 승급심사
+# [6] 승급심사 (기존 유지)
 elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사 현황")
     st.info("※ [심사일정] 탭의 데이터를 보여줍니다.")
@@ -416,7 +434,7 @@ elif menu == "📈 승급심사 관리":
     else:
         st.warning("등록된 심사 일정이 없습니다.")
 
-# [7] 이달의 생일
+# [7] 이달의 생일 (기존 유지)
 elif menu == "🎂 이달의 생일":
     kst_now = get_korea_time()
     this_month = kst_now.month
