@@ -27,9 +27,7 @@ def get_gspread_client():
     except Exception as e:
         return None
 
-# ---------------------------------------------------------
-# [최적화 1] 자주 바뀌는 데이터 (원생명단) -> 5초 캐시
-# ---------------------------------------------------------
+# [최적화 1] 자주 바뀌는 데이터 (5초 캐시)
 @st.cache_data(ttl=5) 
 def load_fast_data():
     client = get_gspread_client()
@@ -44,9 +42,7 @@ def load_fast_data():
     except:
         return pd.DataFrame()
 
-# ---------------------------------------------------------
-# [최적화 2] 잘 안 바뀌는 데이터 -> 10분 캐시
-# ---------------------------------------------------------
+# [최적화 2] 잘 안 바뀌는 데이터 (10분 캐시)
 @st.cache_data(ttl=600)
 def load_slow_data(sheet_name):
     client = get_gspread_client()
@@ -91,9 +87,7 @@ def update_check_status(student_name, col_name, status_value):
     except:
         pass
 
-# ==========================================
 # 데이터 로드
-# ==========================================
 df_students = load_fast_data() 
 df_notice = load_slow_data("공지사항")
 df_guide = load_slow_data("기질가이드")
@@ -104,7 +98,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 29.0 (Color)**")
+    st.markdown("**System Ver 30.0 (Fixed)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -281,7 +275,7 @@ elif menu == "🔐 관리자 모드":
     elif admin_pw:
         st.error("비밀번호가 틀렸습니다.")
 
-# [2] 차량 운행표 (색상 적용)
+# [2] 차량 운행표 (수정됨)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
@@ -336,55 +330,47 @@ elif menu == "🚍 차량 운행표":
             </div>
             """, unsafe_allow_html=True)
             
-            # [핵심] 카드 뷰 생성 (상태에 따라 다른 컨테이너 사용)
+            # [핵심] 에러 안 나는 안전한 카드 그리기 함수
+            def draw_card(row, status):
+                c1, c2, c3 = st.columns([3, 1, 1])
+                t_val = row[time_col] if time_col in row else "-"
+                l_val = row[loc_col] if loc_col in row else "-"
+                
+                with c1:
+                    st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
+                    st.markdown(f"📍 {l_val}")
+                with c2:
+                    if status == '탑승':
+                        if st.button("✅ 완료", key=f"btn_b_{row['이름']}_{mode}"):
+                            update_check_status(row['이름'], check_col, '')
+                            st.rerun()
+                    else:
+                        if st.button("탑승", key=f"btn_b_{row['이름']}_{mode}"):
+                            update_check_status(row['이름'], check_col, '탑승')
+                            st.rerun()
+                with c3:
+                    if status == '결석':
+                            if st.button("❌ 완료", key=f"btn_a_{row['이름']}_{mode}"):
+                                update_check_status(row['이름'], check_col, '')
+                                st.rerun()
+                    else:
+                        if st.button("결석", key=f"btn_a_{row['이름']}_{mode}"):
+                            update_check_status(row['이름'], check_col, '결석')
+                            st.rerun()
+
+            # 상태별 박스 분기 (에러 방지: if-else 명확화)
             for i, row in final_df.iterrows():
                 current_status = row.get(check_col, '')
                 
-                # 1. 탑승 완료: 초록색(success) 박스
                 if current_status == '탑승':
-                    box_context = st.success
-                # 2. 결석: 빨간색(error) 박스
+                    with st.success(f"✅ 탑승 확인 완료"):
+                        draw_card(row, current_status)
                 elif current_status == '결석':
-                    box_context = st.error
-                # 3. 미확인: 기본 박스(container)
-                else:
-                    box_context = None # 아래에서 처리
-
-                # 박스 그리기
-                def draw_content():
-                    c1, c2, c3 = st.columns([3, 1, 1])
-                    t_val = row[time_col] if time_col in row else "-"
-                    l_val = row[loc_col] if loc_col in row else "-"
-                    
-                    with c1:
-                        st.markdown(f"#### ⏰ {t_val} | {row['이름']}")
-                        st.markdown(f"📍 {l_val}")
-                    with c2:
-                        if current_status == '탑승':
-                            if st.button("✅ 완료", key=f"btn_b_{i}"):
-                                update_check_status(row['이름'], check_col, '')
-                                st.rerun()
-                        else:
-                            if st.button("탑승", key=f"btn_b_{i}"):
-                                update_check_status(row['이름'], check_col, '탑승')
-                                st.rerun()
-                    with c3:
-                        if current_status == '결석':
-                             if st.button("❌ 완료", key=f"btn_a_{i}"):
-                                update_check_status(row['이름'], check_col, '')
-                                st.rerun()
-                        else:
-                            if st.button("결석", key=f"btn_a_{i}"):
-                                update_check_status(row['이름'], check_col, '결석')
-                                st.rerun()
-
-                # 컨테이너 종류에 따라 그리기 실행
-                if box_context:
-                    with box_context():
-                        draw_content()
+                    with st.error(f"❌ 결석 처리됨"):
+                        draw_card(row, current_status)
                 else:
                     with st.container(border=True):
-                        draw_content()
+                        draw_card(row, current_status)
 
         else:
             st.info("해당 차량에 탑승하는 인원이 없습니다.")
@@ -421,7 +407,7 @@ elif menu == "📝 수련부 출석":
     else:
         st.error("'수련부' 컬럼이 없습니다.")
 
-# [4] 기질 인사이트 (기존 유지)
+# [4] 기질 인사이트
 elif menu == "🔍 기질 인사이트":
     st.header("🔍 기질 검색")
     name = st.text_input("이름 입력")
@@ -440,7 +426,7 @@ elif menu == "🔍 기질 인사이트":
         else:
             st.error("없는 이름입니다.")
 
-# [5] 훈육 코치 (기존 유지)
+# [5] 훈육 코치
 elif menu == "💬 훈육 코치":
     st.header("💬 AI 훈육 코치")
     if not df_guide.empty:
@@ -450,7 +436,7 @@ elif menu == "💬 훈육 코치":
             guide = df_guide[df_guide['기질유형'] == sel].iloc[0]
             st.code(guide.get('훈육_스크립트', '데이터 없음'))
 
-# [6] 승급심사 (기존 유지)
+# [6] 승급심사
 elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사 현황")
     st.info("※ [심사일정] 탭의 데이터를 보여줍니다.")
@@ -467,7 +453,7 @@ elif menu == "📈 승급심사 관리":
     else:
         st.warning("등록된 심사 일정이 없습니다.")
 
-# [7] 이달의 생일 (기존 유지)
+# [7] 이달의 생일
 elif menu == "🎂 이달의 생일":
     kst_now = get_korea_time()
     this_month = kst_now.month
