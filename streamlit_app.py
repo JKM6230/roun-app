@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ==========================================
 # [설정] 관장님의 데이터 주소
@@ -22,12 +22,17 @@ st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="�
 if 'check_status' not in st.session_state:
     st.session_state['check_status'] = {}
 
+# [핵심] 한국 시간(KST) 구하기 함수
+def get_korea_time():
+    # UTC 시간에서 9시간을 더해 한국 시간을 만듭니다.
+    return datetime.utcnow() + timedelta(hours=9)
+
 @st.cache_data(ttl=0)
 def load_data(gid):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
     try:
         df = pd.read_csv(url, dtype=str)
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.strip() # 공백 제거
         return df
     except:
         return pd.DataFrame()
@@ -42,7 +47,7 @@ df_schedule = load_data(gid_schedule)
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 14.0 (Fix)**")
+    st.markdown("**System Ver 15.0 (KST)**")
     st.markdown("---")
     
     menu = st.radio("메뉴 선택", [
@@ -56,16 +61,18 @@ with st.sidebar:
     ])
     
     st.markdown("---")
-    st.caption(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
     
-    # [일반용] 데이터만 새로고침 (체크박스 유지)
+    # 한국 시간 기준 접속일 표시
+    kst_now = get_korea_time()
+    st.caption(f"접속: {kst_now.strftime('%Y-%m-%d %H:%M')}")
+    
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
         
     st.markdown("---")
 
-    # [관리자용] 완전 초기화 (체크박스 삭제)
+    # 관리자 메뉴
     st.markdown("### 🔐 관리자 메뉴")
     admin_pw = st.text_input("비밀번호 입력", type="password", key="admin_pw")
     
@@ -82,9 +89,19 @@ with st.sidebar:
 
 # [1] 홈 대시보드
 if menu == "🏠 홈 대시보드":
-    st.header("📢 오늘의 작전 브리핑")
-    st.caption("최근 등록된 공지사항 3개가 표시됩니다.")
+    # [NEW] 우측 상단 날짜 표시 (컬럼 분할)
+    col_title, col_date = st.columns([3, 1])
     
+    with col_title:
+        st.header("📢 오늘의 작전 브리핑")
+    with col_date:
+        # 한국 시간으로 날짜 표시
+        kst_today_str = get_korea_time().strftime("%Y년 %m월 %d일 (%a)")
+        st.markdown(f"<h3 style='text-align: right; color: gray;'>{kst_today_str}</h3>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # 1. 공지사항 (최신 3개)
     if not df_notice.empty:
         try:
             recent_notices = df_notice.tail(3)
@@ -94,37 +111,59 @@ if menu == "🏠 홈 대시보드":
                 if n_content.strip():
                     st.info(f"**[{n_date}]** {n_content}")
         except:
-            st.warning("공지사항 데이터 오류")
+            st.warning("공지사항 로드 실패")
     else:
         st.info("등록된 공지사항이 없습니다.")
 
-    st.markdown("---")
+    # 2. 오늘 심사 및 생일 (2단 분리)
+    c1, c2 = st.columns(2)
     
-    # [수정됨] 심사 일정 날짜 인식 강화
-    today_dt = datetime.now().date()
+    # 한국 날짜 기준
+    kst_date = get_korea_time().date()
     
-    if not df_schedule.empty:
-        date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
-        
-        # 1. 날짜 정제 (공백 제거 및 숫자/하이픈만 남기기)
-        # 예: "2026. 2. 4" -> "202624" (X) -> 좀 더 안전하게 to_datetime에 맡기되 공백제거
-        df_schedule['clean_date'] = df_schedule[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
-        
-        # 2. 날짜 객체로 변환
-        df_schedule['smart_date'] = pd.to_datetime(df_schedule['clean_date'], errors='coerce').dt.date
-        
-        # 3. 오늘 날짜와 비교
-        today_test = df_schedule[df_schedule['smart_date'] == today_dt]
-        
-        if not today_test.empty:
-            st.error(f"🔥 **오늘 승급심사: {len(today_test)}명**")
-            for i, row in today_test.iterrows():
-                name_val = row['이름'] if '이름' in row else row.iloc[1]
-                st.write(f" - **{name_val}** (화이팅!)")
+    with c1:
+        st.subheader("🔥 오늘 승급심사")
+        if not df_schedule.empty:
+            date_col = '날짜' if '날짜' in df_schedule.columns else df_schedule.columns[0]
+            
+            # 날짜 정제 및 한국 시간 비교
+            df_schedule['clean_date'] = df_schedule[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
+            df_schedule['smart_date'] = pd.to_datetime(df_schedule['clean_date'], errors='coerce').dt.date
+            
+            today_test = df_schedule[df_schedule['smart_date'] == kst_date]
+            
+            if not today_test.empty:
+                st.error(f"**총 {len(today_test)}명**")
+                for i, row in today_test.iterrows():
+                    name_val = row['이름'] if '이름' in row else row.iloc[1]
+                    st.write(f"- {name_val}")
+            else:
+                st.success("일정 없음")
         else:
-            st.success("✅ 오늘 예정된 심사는 없습니다.")
-    else:
-        st.info("심사 일정 데이터가 없습니다.")
+            st.write("데이터 없음")
+
+    with c2:
+        st.subheader("🎂 오늘 생일")
+        birth_col = '생일' if '생일' in df_students.columns else '생년월일'
+        
+        if not df_students.empty and birth_col in df_students.columns:
+            df_students['clean_birth'] = df_students[birth_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
+            df_students['temp_date'] = pd.to_datetime(df_students['clean_birth'], format='%Y%m%d', errors='coerce')
+            
+            # 월, 일이 오늘(한국시간)과 똑같은지 확인
+            today_birth = df_students[
+                (df_students['temp_date'].dt.month == kst_date.month) & 
+                (df_students['temp_date'].dt.day == kst_date.day)
+            ]
+            
+            if not today_birth.empty:
+                st.balloons() # 생일자 있으면 풍선!
+                for i, row in today_birth.iterrows():
+                    st.warning(f"🎉 **{row['이름']}**")
+            else:
+                st.info("생일자 없음")
+        else:
+            st.write("데이터 없음")
 
 # [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
@@ -242,7 +281,6 @@ elif menu == "📈 승급심사 관리":
         target_df = df_schedule.copy()
         date_col = '날짜' if '날짜' in target_df.columns else target_df.columns[0]
         
-        # 스마트 정렬 (날짜로 인식)
         target_df['clean_date'] = target_df[date_col].astype(str).str.replace(' ', '').str.replace('.', '-')
         target_df['sort_date'] = pd.to_datetime(target_df['clean_date'], errors='coerce')
         target_df = target_df.sort_values(by='sort_date')
@@ -251,10 +289,12 @@ elif menu == "📈 승급심사 관리":
     else:
         st.warning("등록된 심사 일정이 없습니다.")
 
-# [7] 이달의 생일 (일 기준 정렬)
+# [7] 이달의 생일
 elif menu == "🎂 이달의 생일":
+    kst_now = get_korea_time()
+    this_month = kst_now.month
+    
     st.header("🎂 이달의 생일자")
-    this_month = datetime.now().month
     st.subheader(f"{this_month}월의 주인공 🎉")
     
     birth_col = '생일' if '생일' in df_students.columns else '생년월일'
@@ -265,7 +305,6 @@ elif menu == "🎂 이달의 생일":
         b_kids = df_students[df_students['temp_date'].dt.month == this_month]
         
         if not b_kids.empty:
-            # [수정됨] 일(Day)만 뽑아서 정렬 (연도 무시)
             b_kids['day_only'] = b_kids['temp_date'].dt.day
             b_kids = b_kids.sort_values(by='day_only')
             
