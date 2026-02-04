@@ -49,7 +49,6 @@ def load_slow_data(sheet_name):
     if not client: return pd.DataFrame()
     try:
         sh = client.open_by_key(SHEET_ID)
-        # [수정 완료] 따옴표 제거하여 변수로 인식하게 함
         worksheet = sh.worksheet(sheet_name)
         rows = worksheet.get_all_values()
         if len(rows) < 2: return pd.DataFrame() 
@@ -131,7 +130,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 42.0 (Notice Fix)**")
+    st.markdown("**System Ver 43.0 (Absent List)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -146,6 +145,7 @@ with st.sidebar:
         "🏠 홈 대시보드", 
         "🚍 차량 운행표", 
         "📝 수련부 출석", 
+        "📉 오늘의 결석자", # [NEW] 메뉴 추가
         "🧠 기질/훈육 통합",
         "📈 승급심사 관리",
         "🎂 이달의 생일",
@@ -182,7 +182,6 @@ if menu == "🏠 홈 대시보드":
     if auto_refresh:
         st.caption("🟢 실시간 업데이트 중...")
 
-    # [수정됨] 공지사항 로드 로직
     if not df_notice.empty and len(df_notice.columns) >= 2:
         recent_notices = df_notice.tail(10)
         for i, row in recent_notices.iloc[::-1].iterrows():
@@ -349,7 +348,7 @@ elif menu == "🚍 차량 운행표":
     else:
         st.error("데이터 로드 실패")
 
-# [3] 수련부 출석 (요일 필터링 복구)
+# [3] 수련부 출석
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
@@ -357,7 +356,6 @@ elif menu == "📝 수련부 출석":
         class_list = sorted([str(x) for x in raw_classes if str(x).strip() != ''])
         
         if class_list:
-            # [복구된 기능] 요일 확인 및 필터링 스위치
             now = get_korea_time()
             weekdays = ["월", "화", "수", "목", "금", "토", "일"]
             today_char = weekdays[now.weekday()]
@@ -368,12 +366,9 @@ elif menu == "📝 수련부 출석":
             with c_select:
                 selected_class = st.selectbox("수련 시간 선택", class_list)
             
-            # 수련부 필터링
             class_students = df_students[df_students['수련부'].astype(str) == selected_class]
             
-            # [중요] 등원요일 필터링 적용 (화목금 아이는 수요일에 안 보임)
             if show_today_only and '등원요일' in df_students.columns:
-                # 조건: (빈칸) 이거나 (오늘 요일이 포함된 경우)
                 class_students = class_students[
                     (class_students['등원요일'].astype(str).str.strip() == '') | 
                     (class_students['등원요일'].astype(str).str.contains(today_char))
@@ -449,7 +444,43 @@ elif menu == "📝 수련부 출석":
     else:
         st.error("엑셀에 '수련부' 컬럼이 없습니다.")
 
-# [4] 기질/훈육 통합
+# [4] 오늘의 결석자 (NEW!)
+elif menu == "📉 오늘의 결석자":
+    st.header("📉 오늘의 결석 현황")
+    
+    if '출석확인' in df_students.columns:
+        # 결석한 인원 필터링
+        absent_list = df_students[df_students['출석확인'] == '결석']
+        
+        # 수련부 순으로 정렬 (보기 편하게)
+        if '수련부' in absent_list.columns:
+            absent_list = absent_list.sort_values(by='수련부')
+        
+        count = len(absent_list)
+        st.metric("오늘 총 결석", f"{count}명")
+        
+        st.markdown("---")
+        
+        if count > 0:
+            # 보여줄 컬럼 선택
+            cols_to_show = ['이름', '수련부', '비고']
+            # 엑셀에 '비고' 컬럼이 없으면 뺌
+            if '비고' not in absent_list.columns:
+                cols_to_show = ['이름', '수련부']
+                
+            # 깔끔한 표로 보여주기
+            st.dataframe(
+                absent_list[cols_to_show],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.balloons()
+            st.success("🎉 와우! 현재까지 결석자가 한 명도 없습니다. (전원 출석)")
+    else:
+        st.error("엑셀에 '출석확인' 데이터가 없습니다.")
+
+# [5] 기질/훈육 통합
 elif menu == "🧠 기질/훈육 통합":
     st.header("🧠 원생 맞춤형 훈육 가이드")
     st.info("💡 아이 이름을 검색하면 기질 정보와 훈육법을 한 번에 보여줍니다.")
