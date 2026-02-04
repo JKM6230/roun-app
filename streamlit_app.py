@@ -12,6 +12,28 @@ SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
+# [NEW] 화이트 테마(Light Mode) 강제 적용 코드
+st.markdown("""
+    <style>
+        /* 전체 배경 흰색으로 강제 고정 */
+        .stApp {
+            background-color: #FFFFFF;
+        }
+        /* 사이드바 배경 밝은 회색 */
+        [data-testid="stSidebar"] {
+            background-color: #F0F2F6;
+        }
+        /* 기본 텍스트 색상 검정으로 고정 (다크모드 폰에서 글씨 안 보이는 문제 방지) */
+        h1, h2, h3, h4, h5, h6, p, span, div {
+            color: #31333F;
+        }
+        /* 입력창 글씨 색상 */
+        .stTextInput input {
+            color: #31333F;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 def get_korea_time():
     return datetime.utcnow() + timedelta(hours=9)
 
@@ -130,7 +152,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 43.0 (Absent List)**")
+    st.markdown("**System Ver 44.0 (White Theme)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -145,7 +167,7 @@ with st.sidebar:
         "🏠 홈 대시보드", 
         "🚍 차량 운행표", 
         "📝 수련부 출석", 
-        "📉 오늘의 결석자", # [NEW] 메뉴 추가
+        "📉 오늘의 결석자",
         "🧠 기질/훈육 통합",
         "📈 승급심사 관리",
         "🎂 이달의 생일",
@@ -444,15 +466,12 @@ elif menu == "📝 수련부 출석":
     else:
         st.error("엑셀에 '수련부' 컬럼이 없습니다.")
 
-# [4] 오늘의 결석자 (NEW!)
+# [4] 오늘의 결석자
 elif menu == "📉 오늘의 결석자":
     st.header("📉 오늘의 결석 현황")
     
     if '출석확인' in df_students.columns:
-        # 결석한 인원 필터링
         absent_list = df_students[df_students['출석확인'] == '결석']
-        
-        # 수련부 순으로 정렬 (보기 편하게)
         if '수련부' in absent_list.columns:
             absent_list = absent_list.sort_values(by='수련부')
         
@@ -462,18 +481,10 @@ elif menu == "📉 오늘의 결석자":
         st.markdown("---")
         
         if count > 0:
-            # 보여줄 컬럼 선택
             cols_to_show = ['이름', '수련부', '비고']
-            # 엑셀에 '비고' 컬럼이 없으면 뺌
             if '비고' not in absent_list.columns:
                 cols_to_show = ['이름', '수련부']
-                
-            # 깔끔한 표로 보여주기
-            st.dataframe(
-                absent_list[cols_to_show],
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(absent_list[cols_to_show], use_container_width=True, hide_index=True)
         else:
             st.balloons()
             st.success("🎉 와우! 현재까지 결석자가 한 명도 없습니다. (전원 출석)")
