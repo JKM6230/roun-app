@@ -12,7 +12,7 @@ SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# 화이트 테마 강제 고정
+# 화이트 테마 강제 고정 (글씨 검정)
 st.markdown("""
     <style>
         .stApp { background-color: #FFFFFF; }
@@ -138,7 +138,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 45.0 (Unified Bus)**")
+    st.markdown("**System Ver 46.0 (Color Cards)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -245,7 +245,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [2] 차량 운행표 (통합 시간표 + 색상 구분)
+# [2] 차량 운행표 (디자인 개선: 이름 크게, 시간 구분)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     
@@ -253,23 +253,20 @@ elif menu == "🚍 차량 운행표":
     weekdays_kr = ["월", "화", "수", "목", "금", "토", "일"]
     today_char = weekdays_kr[now.weekday()]
     
-    st.info(f"📅 **오늘({today_char}요일)** 시간순 전체 리스트입니다. (🟦등원 / 🟨하원)")
+    st.caption(f"📅 **오늘({today_char}요일)** 시간순 전체 리스트 (🟦등원 / 🟨하원)")
 
     if not df_students.empty:
-        # 1. 원본 복사 및 스마트 파싱
         working_df = df_students.copy()
         
-        # 등원/하원 차량, 시간, 장소 모두 오늘 요일에 맞춰 변환
+        # 스마트 파싱
         for col in ['등원차량', '등원시간', '등원장소', '하원차량', '하원시간', '하원장소']:
             if col in working_df.columns:
                 working_df[col] = working_df[col].apply(lambda x: parse_schedule_for_today(x, today_char))
         
-        # 차량 이용 여부 필터링
         if '차량이용여부' in working_df.columns:
             working_df = working_df[working_df['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
 
-        # 2. 차량 선택
-        # 등원이나 하원 중 하나라도 차량이 있으면 리스트업
+        # 차량 선택
         cars_in = working_df['등원차량'].unique().tolist()
         cars_out = working_df['하원차량'].unique().tolist()
         all_cars = sorted(list(set([x for x in cars_in + cars_out if x and str(x).strip() != ''])))
@@ -277,10 +274,9 @@ elif menu == "🚍 차량 운행표":
         if all_cars:
             selected_car = st.selectbox("배차 선택", all_cars)
             
-            # 3. 통합 리스트 만들기 (등원 + 하원)
             schedule_list = []
             
-            # (1) 등원 데이터 수집
+            # 등원 수집
             in_df = working_df[working_df['등원차량'] == selected_car]
             for _, row in in_df.iterrows():
                 schedule_list.append({
@@ -292,7 +288,7 @@ elif menu == "🚍 차량 운행표":
                     'check_col': '등원확인'
                 })
                 
-            # (2) 하원 데이터 수집
+            # 하원 수집
             out_df = working_df[working_df['하원차량'] == selected_car]
             for _, row in out_df.iterrows():
                 schedule_list.append({
@@ -304,55 +300,48 @@ elif menu == "🚍 차량 운행표":
                     'check_col': '하원확인'
                 })
             
-            # 4. 시간순 정렬 (빈 시간은 뒤로)
-            # 시간을 비교 가능한 형태로 변환하는 함수
+            # 시간순 정렬
             def time_sort_key(val):
                 t = str(val['time']).strip()
-                if not t: return "99:99" # 시간 없으면 맨 뒤로
-                # 12시간제/24시간제 대충 처리 (단순 문자열 정렬 보완)
-                # 오후 1시 -> 13시로 바꾸면 좋겠지만, 일단 엑셀에 13:00 등으로 적는 것 권장
-                # 여기서는 길이와 텍스트로 1차 정렬
+                if not t: return "99:99" 
                 return t.zfill(5) 
             
             schedule_list.sort(key=time_sort_key)
             
-            # 5. 화면 출력 (시간별 그룹핑)
+            # 진행률
             total_cnt = len(schedule_list)
             done_cnt = len([x for x in schedule_list if x['status'] in ['탑승', '결석']])
-            
             st.progress(done_cnt / total_cnt if total_cnt > 0 else 0)
             
             current_time_group = None
             
             for idx, item in enumerate(schedule_list):
-                # 시간 그룹 헤더 (시간이 바뀌면 표시)
                 time_display = item['time'] if item['time'] else "시간 미정"
                 
+                # [디자인] 시간 구분선 (시간이 바뀔 때마다 표시)
                 if time_display != current_time_group:
-                    st.markdown(f"### ⏰ {time_display}")
                     st.markdown("---")
+                    st.subheader(f"⏰ {time_display}")
                     current_time_group = time_display
                 
-                # 카드 색상 결정 (등원=파랑/info, 하원=노랑/warning)
-                # 결석이거나 완료면 색상 변경은 유지하되, 완료 상태 표시
-                
-                # 기본 박스 타입 설정
+                # [디자인] 박스 색상 (등원=info/파랑, 하원=warning/노랑)
                 if item['type'] == '등원':
-                    box_func = st.info  # 파란색
-                    type_label = "🟦 등원"
+                    box_func = st.info
+                    label = "🟦 등원"
                 else:
-                    box_func = st.warning # 노란색
-                    type_label = "🟨 하원"
+                    box_func = st.warning
+                    label = "🟨 하원"
                 
-                # 완료 여부에 따른 UI
                 is_done = (item['status'] == '탑승')
                 is_absent = (item['status'] == '결석')
                 
-                # 카드 그리기
-                with box_func(f"{type_label} | {item['name']}"):
+                # 카드 출력
+                with box_func(f"{label}"): # 헤더는 간단하게
                     c1, c2, c3 = st.columns([3, 1, 1])
                     
                     with c1:
+                        # [핵심] 이름을 여기서 크게 출력!
+                        st.markdown(f"#### 🥋 {item['name']}")
                         st.write(f"📍 {item['loc']}")
                         if is_done: st.caption("✅ 탑승 완료")
                         if is_absent: st.caption("❌ 결석")
@@ -363,6 +352,7 @@ elif menu == "🚍 차량 운행표":
                                 update_check_status(item['name'], item['check_col'], '')
                                 st.rerun()
                         else:
+                            # 탑승 버튼
                             if st.button("탑승", key=f"ride_{idx}_{item['name']}_{item['type']}"):
                                 update_check_status(item['name'], item['check_col'], '탑승')
                                 st.rerun()
@@ -373,6 +363,7 @@ elif menu == "🚍 차량 운행표":
                                 update_check_status(item['name'], item['check_col'], '')
                                 st.rerun()
                         else:
+                            # 결석 버튼
                             if st.button("결석", key=f"abs_{idx}_{item['name']}_{item['type']}"):
                                 update_check_status(item['name'], item['check_col'], '결석')
                                 st.rerun()
