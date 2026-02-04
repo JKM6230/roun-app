@@ -12,13 +12,41 @@ SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# 화이트 테마 강제 고정 (글씨 검정)
+# [디자인 강제 고정] 모바일 다크모드 무시 및 카드 색상 강화
 st.markdown("""
     <style>
-        .stApp { background-color: #FFFFFF; }
-        [data-testid="stSidebar"] { background-color: #F0F2F6; }
-        h1, h2, h3, h4, h5, h6, p, span, div { color: #31333F; }
-        .stTextInput input { color: #31333F; }
+        /* 1. 전체 배경 무조건 흰색 */
+        [data-testid="stAppViewContainer"] {
+            background-color: #ffffff !important;
+        }
+        /* 2. 사이드바 배경 밝은 회색 */
+        [data-testid="stSidebar"] {
+            background-color: #f0f2f6 !important;
+        }
+        /* 3. 모든 텍스트 검정색 (다크모드 방지) */
+        .stMarkdown, h1, h2, h3, h4, h5, h6, p, span, div, label {
+            color: #000000 !important;
+        }
+        /* 4. 입력창 글씨도 검정 */
+        .stTextInput input {
+            color: #000000 !important;
+        }
+        
+        /* 5. [등원 카드] 파란색 배경 강제 적용 (st.info) */
+        div[data-testid="stAlert"][class*="st-ae"] { 
+            background-color: #d1ecf1 !important; /* 연한 파랑 */
+            border-color: #bee5eb !important;
+        }
+        /* 6. [하원 카드] 노란색 배경 강제 적용 (st.warning) */
+        div[data-testid="stAlert"][class*="st-ak"] {
+            background-color: #fff3cd !important; /* 연한 노랑 */
+            border-color: #ffeeba !important;
+        }
+        
+        /* 버튼 텍스트 색상은 유지 (가독성 위해) */
+        button p {
+            color: inherit !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -138,7 +166,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 46.0 (Color Cards)**")
+    st.markdown("**System Ver 47.0 (Design Force)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -245,7 +273,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [2] 차량 운행표 (디자인 개선: 이름 크게, 시간 구분)
+# [2] 차량 운행표 (디자인 강화)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     
@@ -318,13 +346,13 @@ elif menu == "🚍 차량 운행표":
             for idx, item in enumerate(schedule_list):
                 time_display = item['time'] if item['time'] else "시간 미정"
                 
-                # [디자인] 시간 구분선 (시간이 바뀔 때마다 표시)
+                # 시간 구분선
                 if time_display != current_time_group:
                     st.markdown("---")
                     st.subheader(f"⏰ {time_display}")
                     current_time_group = time_display
                 
-                # [디자인] 박스 색상 (등원=info/파랑, 하원=warning/노랑)
+                # 박스 색상 (CSS 강제 적용으로 색상 보장)
                 if item['type'] == '등원':
                     box_func = st.info
                     label = "🟦 등원"
@@ -336,11 +364,10 @@ elif menu == "🚍 차량 운행표":
                 is_absent = (item['status'] == '결석')
                 
                 # 카드 출력
-                with box_func(f"{label}"): # 헤더는 간단하게
+                with box_func(f"{label}"): 
                     c1, c2, c3 = st.columns([3, 1, 1])
                     
                     with c1:
-                        # [핵심] 이름을 여기서 크게 출력!
                         st.markdown(f"#### 🥋 {item['name']}")
                         st.write(f"📍 {item['loc']}")
                         if is_done: st.caption("✅ 탑승 완료")
@@ -352,7 +379,6 @@ elif menu == "🚍 차량 운행표":
                                 update_check_status(item['name'], item['check_col'], '')
                                 st.rerun()
                         else:
-                            # 탑승 버튼
                             if st.button("탑승", key=f"ride_{idx}_{item['name']}_{item['type']}"):
                                 update_check_status(item['name'], item['check_col'], '탑승')
                                 st.rerun()
@@ -363,7 +389,6 @@ elif menu == "🚍 차량 운행표":
                                 update_check_status(item['name'], item['check_col'], '')
                                 st.rerun()
                         else:
-                            # 결석 버튼
                             if st.button("결석", key=f"abs_{idx}_{item['name']}_{item['type']}"):
                                 update_check_status(item['name'], item['check_col'], '결석')
                                 st.rerun()
