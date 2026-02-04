@@ -49,13 +49,8 @@ def load_slow_data(sheet_name):
     if not client: return pd.DataFrame()
     try:
         sh = client.open_by_key(SHEET_ID)
-        worksheet = sh.worksheet("sheet_name")
-        # 없을 경우 대비
-        try:
-            worksheet = sh.worksheet(sheet_name)
-        except:
-            return pd.DataFrame()
-            
+        # [수정 완료] 따옴표 제거하여 변수로 인식하게 함
+        worksheet = sh.worksheet(sheet_name)
         rows = worksheet.get_all_values()
         if len(rows) < 2: return pd.DataFrame() 
         headers = rows[0]
@@ -107,36 +102,23 @@ def update_check_status(student_name, col_name, status_value):
     except:
         pass
 
-# [스마트 함수] 요일별 스케줄 파싱 로직 (차량, 시간, 장소 공용)
+# [스마트 함수] 요일별 스케줄 파싱 로직
 def parse_schedule_for_today(raw_text, today_char):
-    """
-    입력: "16:20(월화수목), 17:30(금)"
-    오늘이 '금'이면 -> "17:30" 반환
-    괄호가 없으면 -> 그대로 반환
-    """
     raw_text = str(raw_text).strip()
     if not raw_text:
         return ""
-    
-    # 괄호가 없으면 매일 동일
     if "(" not in raw_text:
         return raw_text
     
-    # 쉼표로 분리
     settings = raw_text.split(',')
     for setting in settings:
         if "(" in setting and ")" in setting:
-            # "16:20(월화수목)" 분리
             parts = setting.split('(')
             val = parts[0].strip()
             days = parts[1].replace(')', '').strip()
-            
             if today_char in days:
                 return val
-        else:
-            pass
-            
-    return "" # 오늘에 해당하는 설정이 없으면 빈칸 (탑승 안함/등원 안함)
+    return ""
 
 # 데이터 로드
 df_students = load_fast_data() 
@@ -149,7 +131,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 41.0 (Full Smart)**")
+    st.markdown("**System Ver 42.0 (Notice Fix)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -200,6 +182,7 @@ if menu == "🏠 홈 대시보드":
     if auto_refresh:
         st.caption("🟢 실시간 업데이트 중...")
 
+    # [수정됨] 공지사항 로드 로직
     if not df_notice.empty and len(df_notice.columns) >= 2:
         recent_notices = df_notice.tail(10)
         for i, row in recent_notices.iloc[::-1].iterrows():
@@ -255,7 +238,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [2] 차량 운행표 (시간/장소까지 스마트 파싱)
+# [2] 차량 운행표
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 차량 스케줄")
     
@@ -279,31 +262,22 @@ elif menu == "🚍 차량 운행표":
         check_col = '하원확인'
 
     if not df_students.empty and veh_col in df_students.columns:
-        # 1. 원본 보호를 위해 복사
         working_df = df_students.copy()
-        
-        # 2. [스마트 변환] 차량, 시간, 장소 모두 오늘 요일에 맞춰 바꿈
-        #    예: 시간 "4:30(월수), 5:30(화목)" -> 오늘이 수요일이면 "4:30"만 남김
         working_df[veh_col] = working_df[veh_col].apply(lambda x: parse_schedule_for_today(x, today_char))
         
         if time_col in working_df.columns:
             working_df[time_col] = working_df[time_col].apply(lambda x: parse_schedule_for_today(x, today_char))
-            
         if loc_col in working_df.columns:
             working_df[loc_col] = working_df[loc_col].apply(lambda x: parse_schedule_for_today(x, today_char))
         
-        # 3. 차량 있는 인원만 필터링
         target = working_df[working_df[veh_col].notna() & (working_df[veh_col] != '')]
-        
         if '차량이용여부' in working_df.columns:
             target = target[target['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
         
         if not target.empty:
             car_list = sorted(target[veh_col].unique().tolist())
             selected_car = st.selectbox("배차 선택", car_list)
-            
             final_df = target[target[veh_col] == selected_car]
-            
             if time_col in final_df.columns:
                 final_df = final_df.sort_values(by=time_col, ascending=True, na_position='last')
             
@@ -332,7 +306,6 @@ elif menu == "🚍 차량 운행표":
             
             for i, row in final_df.iterrows():
                 current_status = row.get(check_col, '')
-                
                 if current_status == '탑승':
                     box = st.success
                 elif current_status == '결석':
@@ -365,20 +338,18 @@ elif menu == "🚍 차량 운행표":
                             if st.button("결석", key=f"btn_a_{row['이름']}_{mode}"):
                                 update_check_status(row['이름'], check_col, '결석')
                                 st.rerun()
-                
                 if box:
                     with box(f"{current_status} 처리됨"):
                         draw_content()
                 else:
                     with st.container(border=True):
                         draw_content()
-
         else:
             st.info("오늘 요일에는 운행하는 차량이 없거나 탑승 인원이 없습니다.")
     else:
         st.error("데이터 로드 실패")
 
-# [3] 수련부 출석 (안전 모드 + 요일 필터)
+# [3] 수련부 출석 (요일 필터링 복구)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
@@ -386,6 +357,7 @@ elif menu == "📝 수련부 출석":
         class_list = sorted([str(x) for x in raw_classes if str(x).strip() != ''])
         
         if class_list:
+            # [복구된 기능] 요일 확인 및 필터링 스위치
             now = get_korea_time()
             weekdays = ["월", "화", "수", "목", "금", "토", "일"]
             today_char = weekdays[now.weekday()]
@@ -396,10 +368,12 @@ elif menu == "📝 수련부 출석":
             with c_select:
                 selected_class = st.selectbox("수련 시간 선택", class_list)
             
+            # 수련부 필터링
             class_students = df_students[df_students['수련부'].astype(str) == selected_class]
             
-            # 요일 필터 적용 (등원요일 컬럼이 있을 경우)
+            # [중요] 등원요일 필터링 적용 (화목금 아이는 수요일에 안 보임)
             if show_today_only and '등원요일' in df_students.columns:
+                # 조건: (빈칸) 이거나 (오늘 요일이 포함된 경우)
                 class_students = class_students[
                     (class_students['등원요일'].astype(str).str.strip() == '') | 
                     (class_students['등원요일'].astype(str).str.contains(today_char))
