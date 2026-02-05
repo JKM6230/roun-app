@@ -261,7 +261,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 64.0 (Notice Color)**")
+    st.markdown("**System Ver 65.0 (Search Added)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -287,44 +287,25 @@ if menu == "🏠 홈 대시보드":
             content = str(row.iloc[1]).strip()
             if not content: continue
             
-            # [NEW] 공지사항 컬러링 로직
-            # 기본값: 초록색 (기타)
-            bg_color = "#e8f5e9" # 연한 초록
-            border_color = "#4caf50" # 진한 초록
+            bg_color = "#e8f5e9" # 기본 초록
+            border_color = "#4caf50"
             icon = "✅"
             
-            # 키워드 감지
             if "[상담]" in content:
-                bg_color = "#ffebee" # 연한 빨강
-                border_color = "#ef5350" # 진한 빨강
-                icon = "📞"
+                bg_color, border_color, icon = "#ffebee", "#ef5350", "📞"
             elif "[도복]" in content:
-                bg_color = "#e3f2fd" # 연한 파랑
-                border_color = "#2196f3" # 진한 파랑
-                icon = "🥋"
+                bg_color, border_color, icon = "#e3f2fd", "#2196f3", "🥋"
             elif "[심사]" in content or "심사" in content:
-                bg_color = "#fff9c4" # 연한 노랑
-                border_color = "#fbc02d" # 진한 노랑
-                icon = "🏆"
+                bg_color, border_color, icon = "#fff9c4", "#fbc02d", "🏆"
                 
-            # HTML 카드 출력
             st.markdown(f"""
-            <div style="
-                background-color: {bg_color};
-                border-left: 5px solid {border_color};
-                padding: 15px;
-                border-radius: 8px;
-                margin-bottom: 10px;
-                color: black;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-            ">
+            <div style="background-color: {bg_color}; border-left: 5px solid {border_color}; padding: 15px; border-radius: 8px; margin-bottom: 10px; color: black; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
                 <div style="font-weight:bold; font-size:1.05em; margin-bottom:5px;">{icon} 공지</div>
                 <div style="white-space: pre-wrap;">{content}</div>
             </div>
             """, unsafe_allow_html=True)
             
     else: st.info("등록된 공지사항이 없습니다.")
-    
     st.markdown("---")
     if not df_schedule.empty:
         today_test = df_schedule[pd.to_datetime(df_schedule.iloc[:,0].astype(str).str.replace('.','-'), errors='coerce').dt.date == now.date()]
@@ -366,8 +347,7 @@ elif menu == "🚍 차량 운행표":
                     curr_time = item['time']
                 
                 bg, border, icon = ("#e3f2fd", "#2196f3", "🟦") if item['type'] == '등원' else ("#fff9c4", "#fbc02d", "🟨")
-                if item['status'] == '결석':
-                    bg, border = "#ffebee", "#ef5350"
+                if item['status'] == '결석': bg, border = "#ffebee", "#ef5350"
                 
                 status_html = ""
                 if item['status'] == '탑승': status_html = "<span style='color:green;font-weight:bold;margin-left:10px;'>✅ 탑승완료</span>"
@@ -391,26 +371,46 @@ elif menu == "🚍 차량 운행표":
         else: st.info("운행 차량 없음")
     else: st.error("데이터 로드 실패")
 
-# 3. 출석부
+# 3. 출석부 (검색 기능 추가됨)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
-        class_list = sorted([str(x) for x in df_students['수련부'].dropna().unique() if str(x).strip() != ''])
-        if class_list:
-            now = get_korea_time()
-            today_char = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
-            
-            c1, c2 = st.columns([1, 2])
-            with c1: show_today = st.toggle(f"📅 오늘({today_char})만", value=True)
-            with c2: selected_class = st.selectbox("수련 시간", class_list)
-            
+        now = get_korea_time()
+        today_char = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
+        
+        # [NEW] 상단 검색 및 필터 영역
+        with st.container(border=True):
+            c_search, c_filter = st.columns([2, 1])
+            with c_search:
+                search_query = st.text_input("🔍 전체 원생 검색", placeholder="이름을 입력하면 수련부 상관없이 찾습니다.")
+            with c_filter:
+                # 검색어가 없을 때만 수련부 선택 박스 표시
+                class_list = sorted([str(x) for x in df_students['수련부'].dropna().unique() if str(x).strip() != ''])
+                if not search_query and class_list:
+                    selected_class = st.selectbox("수련 시간 선택", class_list)
+                    show_today = st.toggle(f"📅 오늘({today_char})만", value=True)
+                else:
+                    selected_class = None
+                    show_today = False
+
+        # 데이터 필터링 로직
+        target = pd.DataFrame()
+        title_text = ""
+        
+        if search_query:
+            # 검색 모드: 이름에 검색어 포함된 모든 원생 (수련부 무시)
+            target = df_students[df_students['이름'].str.contains(search_query)]
+            title_text = f"🔍 '{search_query}' 검색 결과 ({len(target)}명)"
+        elif selected_class:
+            # 기존 모드: 선택된 수련부
             target = df_students[df_students['수련부'].astype(str) == selected_class]
             if show_today and '등원요일' in df_students.columns:
                 target = target[target['등원요일'].astype(str).str.strip().eq('') | target['등원요일'].astype(str).str.contains(today_char)]
-            
-            st.write(f"### 🥋 {selected_class} ({len(target)}명)")
-            st.caption("※ 초록색=출석 / 빨간색=결석 / 흰색=미체크")
-            
+            title_text = f"🥋 {selected_class} ({len(target)}명)"
+
+        st.subheader(title_text)
+        
+        if not target.empty:
             for i, row in target.sort_values('이름').iterrows():
                 status = row.get('출석확인', '')
                 note = row.get('비고', '')
@@ -428,10 +428,15 @@ elif menu == "📝 수련부 출석":
                 
                 note_html = f"<div style='margin-top:5px;padding:5px;background:#fff3cd;border-radius:4px;font-size:0.9em;'>📌 {note}</div>" if note and str(note) != 'nan' else ""
                 
+                # [NEW] 검색 시에는 몇 부인지 표시해줌
+                class_info = ""
+                if search_query:
+                    class_info = f"<span style='font-size:0.8em; color:gray; margin-left:5px;'>({row.get('수련부', '-')}부)</span>"
+
                 st.markdown(f"""
                 <div style="background-color:{card_bg};border-left:5px solid {card_border};padding:12px;border-radius:5px;margin-top:15px;margin-bottom:5px;box-shadow:0 1px 3px rgba(0,0,0,0.1);color:black !important;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <span style="font-size:1.3em;font-weight:bold;">{row['이름']}</span>
+                        <span style="font-size:1.3em;font-weight:bold;">{row['이름']} {class_info}</span>
                         <span style="font-weight:bold;">{status_badge}</span>
                     </div>
                     <div style="font-size:0.9em;margin-top:5px;color:#555;">{bus_txt}</div>
@@ -471,6 +476,10 @@ elif menu == "📝 수련부 출석":
                     if d3.button("저장", key=f"sl_{i}"):
                         if register_long_term_schedule(row['이름'], s_d, e_d, r_l): st.success("저장됨"); time.sleep(1); st.rerun()
                         else: st.error("실패")
+        else:
+            if search_query: st.warning(f"'{search_query}' 검색 결과가 없습니다.")
+            else: st.info("수련 시간을 선택해주세요.")
+    else: st.error("엑셀 로드 실패")
 
 # 4. 상담 로그
 elif menu == "📞 학부모 상담":
