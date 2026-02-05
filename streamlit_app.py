@@ -23,6 +23,12 @@ st.markdown("""
         
         /* 버튼 스타일 */
         button { border: 1px solid #ddd !important; background-color: white !important; }
+        
+        /* 체크박스 크기 키우기 */
+        [data-testid="stCheckbox"] label > div:first-child {
+            width: 1.2rem;
+            height: 1.2rem;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -124,7 +130,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 52.0 (HTML Card)**")
+    st.markdown("**System Ver 53.0 (Smart Attd)**")
     
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
@@ -138,7 +144,7 @@ with st.sidebar:
         "🚍 차량 운행표", 
         "📝 수련부 출석", 
         "📉 오늘의 결석자", 
-        "🧠 기질/훈육 통합",
+        "🧠 기질/훈육 통합", 
         "📈 승급심사 관리",
         "🎂 이달의 생일",
         "🔐 관리자 모드"
@@ -169,7 +175,6 @@ if menu == "🏠 홈 대시보드":
         st.info("등록된 공지사항이 없습니다.")
 
     st.markdown("---")
-    # (심사/생일 로직 생략 - 기존과 동일)
     today_dt = get_korea_time().date()
     if not df_schedule.empty:
         today_test = df_schedule[pd.to_datetime(df_schedule.iloc[:,0].astype(str).str.replace('.','-'), errors='coerce').dt.date == today_dt]
@@ -193,7 +198,6 @@ elif menu == "🚍 차량 운행표":
     if not df_students.empty:
         working_df = df_students.copy()
         
-        # 데이터 파싱
         for col in ['등원차량', '등원시간', '등원장소', '하원차량', '하원시간', '하원장소']:
             if col in working_df.columns:
                 working_df[col] = working_df[col].apply(lambda x: parse_schedule_for_today(x, today_char))
@@ -201,7 +205,6 @@ elif menu == "🚍 차량 운행표":
         if '차량이용여부' in working_df.columns:
             working_df = working_df[working_df['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
 
-        # 차량 선택
         cars_in = working_df['등원차량'].unique().tolist()
         cars_out = working_df['하원차량'].unique().tolist()
         all_cars = sorted(list(set([x for x in cars_in + cars_out if x and str(x).strip() != ''])))
@@ -211,7 +214,6 @@ elif menu == "🚍 차량 운행표":
             
             schedule_list = []
             
-            # 데이터 수집 (등원+하원)
             for mode, v_col, t_col, l_col, c_col in [('등원', '등원차량', '등원시간', '등원장소', '등원확인'), ('하원', '하원차량', '하원시간', '하원장소', '하원확인')]:
                 temp_df = working_df[working_df[v_col] == selected_car]
                 for _, row in temp_df.iterrows():
@@ -224,10 +226,8 @@ elif menu == "🚍 차량 운행표":
                         'check_col': c_col
                     })
             
-            # 시간순 정렬
             schedule_list.sort(key=lambda x: x['time'].strip() if x['time'] else "99:99")
             
-            # 진행률 표시
             total_cnt = len(schedule_list)
             done_cnt = len([x for x in schedule_list if x['status'] in ['탑승', '결석']])
             st.progress(done_cnt / total_cnt if total_cnt > 0 else 0)
@@ -237,20 +237,18 @@ elif menu == "🚍 차량 운행표":
             for idx, item in enumerate(schedule_list):
                 time_display = item['time'] if item['time'] else "시간 미정"
                 
-                # 시간 구분선
                 if time_display != current_time_group:
                     st.markdown("---")
                     st.subheader(f"⏰ {time_display}")
                     current_time_group = time_display
                 
-                # [HTML] 카드 색상 직접 지정 (휴대폰 설정 무시)
                 if item['type'] == '등원':
-                    bg_color = "#e3f2fd"   # 연한 파랑 (배경)
-                    border_color = "#2196f3" # 진한 파랑 (왼쪽 줄)
+                    bg_color = "#e3f2fd"
+                    border_color = "#2196f3"
                     icon = "🟦"
                 else:
-                    bg_color = "#fff9c4"   # 연한 노랑 (배경)
-                    border_color = "#fbc02d" # 진한 노랑 (왼쪽 줄)
+                    bg_color = "#fff9c4"
+                    border_color = "#fbc02d"
                     icon = "🟨"
                 
                 is_done = (item['status'] == '탑승')
@@ -260,17 +258,8 @@ elif menu == "🚍 차량 운행표":
                 if is_done: status_html = "<span style='color:green; font-weight:bold; margin-left:10px;'>✅ 탑승완료</span>"
                 if is_absent: status_html = "<span style='color:red; font-weight:bold; margin-left:10px;'>❌ 결석</span>"
 
-                # 1. HTML로 카드 그리기 (색상 강제)
                 st.markdown(f"""
-                <div style="
-                    background-color: {bg_color}; 
-                    padding: 15px; 
-                    border-left: 6px solid {border_color}; 
-                    border-radius: 8px; 
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                    margin-bottom: 5px;
-                    color: black !important;
-                ">
+                <div style="background-color: {bg_color}; padding: 15px; border-left: 6px solid {border_color}; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 5px; color: black !important;">
                     <div style="font-size: 1.2rem; font-weight: bold; color: black; margin-bottom: 5px;">
                         {icon} {item['name']} ({item['type']})
                     </div>
@@ -280,8 +269,6 @@ elif menu == "🚍 차량 운행표":
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 2. 버튼 그리기 (카드 바로 아래에 배치)
-                #    버튼은 HTML 안에 넣을 수 없어서 바로 밑에 둡니다.
                 c1, c2, c3 = st.columns([1, 1, 2])
                 with c1:
                     if is_done:
@@ -301,8 +288,6 @@ elif menu == "🚍 차량 운행표":
                         if st.button("결석", key=f"a_{idx}_{item['name']}_{item['type']}"):
                             update_check_status(item['name'], item['check_col'], '결석')
                             st.rerun()
-                            
-                # 간격 띄우기
                 st.write("") 
 
         else:
@@ -310,7 +295,7 @@ elif menu == "🚍 차량 운행표":
     else:
         st.error("데이터 로드 실패")
 
-# 3. 수련부 출석
+# 3. 수련부 출석 (디자인 업그레이드)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
@@ -323,7 +308,7 @@ elif menu == "📝 수련부 출석":
             
             c_filter, c_select = st.columns([1, 2])
             with c_filter:
-                show_today_only = st.toggle(f"📅 오늘({today_char})만 보기", value=True)
+                show_today_only = st.toggle(f"📅 오늘({today_char})만", value=True)
             with c_select:
                 selected_class = st.selectbox("수련 시간 선택", class_list)
             
@@ -338,67 +323,101 @@ elif menu == "📝 수련부 출석":
             class_students = class_students.sort_values(by='이름')
             
             st.write(f"### 🥋 {selected_class} ({len(class_students)}명)")
-            st.caption("※ '결석' 버튼을 누르면 차량 스케줄도 '결석' 처리됩니다.")
+            st.caption("※ 카드가 초록색이면 출석, 빨간색이면 결석입니다.")
             
             check_col = "출석확인"
             note_col = "비고"
             
             for i, row in class_students.iterrows():
-                # 여기도 HTML 카드로 가독성 높임
-                st.markdown(f"""
-                <div style="border: 1px solid #ddd; border-radius: 5px; padding: 10px; margin-top: 10px; background-color: #ffffff; color: black;">
-                    <span style="font-size: 1.1em; font-weight: bold;">🥋 {row['이름']}</span>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # 차량 정보 표시
-                bus_in = parse_schedule_for_today(row.get('등원차량', ''), today_char)
-                bus_out = parse_schedule_for_today(row.get('하원차량', ''), today_char)
-                info_txt = []
-                if bus_in: info_txt.append(f"🚌 {bus_in}")
-                if bus_out: info_txt.append(f"🏠 {bus_out}")
-                
-                if info_txt:
-                    st.caption(" / ".join(info_txt))
-                
-                # 상태 표시
+                # 상태 확인
                 current_val = row.get(check_col, '')
                 current_note = row.get(note_col, '')
+                is_checked = (current_val == '출석')
                 
-                if current_val == '출석': st.success("✅ 출석 완료")
-                elif current_val == '결석': st.error("❌ 결석 (차량 연동)")
-                if current_note: st.info(f"📌 {current_note}")
+                # [HTML 스타일] 상태별 카드 색상 지정
+                if current_val == '출석':
+                    card_bg = "#e8f5e9" # 연한 초록
+                    card_border = "#4caf50" # 진한 초록
+                    status_badge = "✅ 출석완료"
+                elif current_val == '결석':
+                    card_bg = "#ffebee" # 연한 빨강
+                    card_border = "#ef5350" # 진한 빨강
+                    status_badge = "❌ 결석처리"
+                else:
+                    card_bg = "#ffffff" # 흰색 (미체크)
+                    card_border = "#dddddd" # 회색
+                    status_badge = ""
+
+                # 차량 정보 파싱
+                bus_in = parse_schedule_for_today(row.get('등원차량', ''), today_char)
+                bus_out = parse_schedule_for_today(row.get('하원차량', ''), today_char)
                 
-                c1, c2 = st.columns(2)
+                bus_html = ""
+                if bus_in: bus_html += f"<span style='color:#555; margin-right:10px;'>🚌 {bus_in}</span>"
+                if bus_out: bus_html += f"<span style='color:#555;'>🏠 {bus_out}</span>"
+                if not bus_html: bus_html = "<span style='color:#999;'>도보/자차</span>"
+
+                # 메모 아이콘
+                note_html = ""
+                if current_note and str(current_note) != 'nan':
+                    note_html = f"<div style='margin-top:5px; padding:5px; background:#fff3cd; border-radius:4px; font-size:0.9em;'>📌 {current_note}</div>"
+
+                # 1. HTML로 카드 그리기 (시각적 요소)
+                st.markdown(f"""
+                <div style="
+                    background-color: {card_bg}; 
+                    border-left: 5px solid {card_border}; 
+                    padding: 12px; 
+                    border-radius: 5px; 
+                    margin-top: 15px; 
+                    margin-bottom: 5px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:1.3em; font-weight:bold; color:black;">{row['이름']}</span>
+                        <span style="font-weight:bold; color:black;">{status_badge}</span>
+                    </div>
+                    <div style="font-size:0.9em; margin-top:5px;">{bus_html}</div>
+                    {note_html}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # 2. 조작 버튼 (카드 바로 아래)
+                c1, c2 = st.columns([1, 1])
                 with c1:
-                    is_checked = (current_val == '출석')
-                    if st.checkbox("출석", value=is_checked, key=f"att_{i}_{row['이름']}"):
-                        if not is_checked:
+                    # 체크박스 (크게 만듦)
+                    if st.checkbox("출석확인", value=is_checked, key=f"att_{i}_{row['이름']}"):
+                        if not is_checked: # 값이 바뀔 때만 실행
                             update_check_status(row['이름'], check_col, '출석')
                             st.rerun()
                     else:
-                        if is_checked:
+                        if is_checked: # 체크 해제 시
                             update_check_status(row['이름'], check_col, '')
                             st.rerun()
+                            
                 with c2:
+                    # 결석/취소 버튼
                     if current_val == '결석':
-                        if st.button("취소", key=f"c_{i}"):
+                        if st.button("결석취소", key=f"cncl_{i}"):
                             update_check_status(row['이름'], check_col, '')
                             st.rerun()
                     else:
-                        if st.button("결석", key=f"a_{i}"):
+                        if st.button("결석처리", key=f"abs_{i}"):
                             update_check_status(row['이름'], check_col, '결석')
                             st.rerun()
-                            
-                with st.expander("특이사항"):
-                    t1, t2, t3 = st.columns(3)
-                    if t1.button("🤒병결", key=f"s_{i}"):
+
+                # 특이사항 (접이식)
+                with st.expander("특이사항 / 사유 입력"):
+                    cols = st.columns(4)
+                    if cols[0].button("병결", key=f"s_{i}"):
                         update_check_status(row['이름'], note_col, "병결")
                         st.rerun()
-                    if t2.button("✈여행", key=f"t_{i}"):
+                    if cols[1].button("여행", key=f"t_{i}"):
                         update_check_status(row['이름'], note_col, "여행")
                         st.rerun()
-                    if t3.button("🗑삭제", key=f"d_{i}"):
+                    if cols[2].button("부상", key=f"h_{i}"):
+                        update_check_status(row['이름'], note_col, "부상")
+                        st.rerun()
+                    if cols[3].button("지움", key=f"d_{i}"):
                         update_check_status(row['이름'], note_col, "")
                         st.rerun()
                     
@@ -407,6 +426,11 @@ elif menu == "📝 수련부 출석":
                     if new_note != safe_note:
                         update_check_status(row['이름'], note_col, new_note)
                         st.rerun()
+
+        else:
+            st.info("수련부 데이터가 없습니다.")
+    else:
+        st.error("엑셀에 '수련부' 컬럼이 없습니다.")
 
 # 4. 오늘의 결석자
 elif menu == "📉 오늘의 결석자":
@@ -430,7 +454,6 @@ elif menu == "🧠 기질/훈육 통합":
             row = target.iloc[0]
             gtype = row.get('기질유형', '미검사')
             st.subheader(f"{name} ({gtype})")
-            
             if gtype != '미검사' and not df_guide.empty:
                 guide = df_guide[df_guide['기질유형'] == gtype]
                 if not guide.empty:
@@ -442,7 +465,7 @@ elif menu == "🧠 기질/훈육 통합":
         else:
             st.error("원생을 찾을 수 없습니다.")
 
-# 6. 승급심사/생일/관리자는 동일하게 유지
+# 6. 승급심사/생일/관리자
 elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사 현황")
     if not df_schedule.empty:
@@ -450,12 +473,12 @@ elif menu == "📈 승급심사 관리":
 
 elif menu == "🎂 이달의 생일":
     st.header("🎂 이달의 생일")
-    # (생일 로직은 위와 동일하므로 생략 - 필요시 복구 가능)
-    
+    # (생일 로직은 기존과 동일)
+
 elif menu == "🔐 관리자 모드":
     st.header("관리자")
     if st.text_input("PW", type="password") == "0577":
         st.success("로그인 성공")
         if st.button("하루 마감 (초기화)"):
-            # 초기화 로직 (동일)
+            # 초기화 로직 (기존과 동일)
             st.success("초기화 완료")
