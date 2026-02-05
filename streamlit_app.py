@@ -41,7 +41,7 @@ def get_gspread_client():
         st.error(f"❌ 인증 오류: {e}")
         return None
 
-# [강력해진 데이터 로드] 에러 방지 로직 적용 (get_all_values 사용)
+# [데이터 로드]
 @st.cache_data(ttl=5) 
 def load_fast_data():
     client = get_gspread_client()
@@ -50,19 +50,14 @@ def load_fast_data():
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet("원생명단")
         
-        # [핵심 변경] get_all_records -> get_all_values (빈 헤더 허용)
         rows = worksheet.get_all_values()
+        if len(rows) < 2: return pd.DataFrame()
         
-        if len(rows) < 2: # 데이터가 없거나 헤더만 있는 경우
-            return pd.DataFrame()
-            
-        headers = rows[0] # 첫 줄은 제목
-        data = rows[1:]   # 나머지는 데이터
-        
-        # 데이터프레임 생성 (중복 컬럼명 자동 처리)
+        headers = rows[0]
+        data = rows[1:]
         df = pd.DataFrame(data, columns=headers)
         
-        # 빈 컬럼 이름이 있을 경우 제거 (공백 헤더 제거)
+        # 빈 컬럼 제거
         df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
         
         # 휴관생 숨기기
@@ -74,8 +69,6 @@ def load_fast_data():
             today_str = get_korea_time().strftime("%Y-%m-%d")
             updates_made = False
             
-            # gspread 업데이트를 위한 인덱싱 (DataFrame 인덱스와 시트 행 번호 매칭)
-            # 안전하게 이름으로 행을 찾아서 업데이트
             for i, row in df.iterrows():
                 schedule = str(row.get('장기일정', '')).strip()
                 current_status = str(row.get('출석확인', '')).strip()
@@ -87,19 +80,15 @@ def load_fast_data():
                         start_date = start_date.strip()
                         end_date = end_date.strip()
                         
-                        # 시트에서 해당 원생의 행 번호 찾기 (이름 기준)
                         try:
                             cell = worksheet.find(row['이름'])
                             if not cell: continue
                             row_idx = cell.row
                             
-                            # 기간 지남 -> 삭제
                             if today_str > end_date:
                                 target_col = worksheet.find("장기일정").col
                                 worksheet.update_cell(row_idx, target_col, "")
                                 updates_made = True
-                            
-                            # 기간 중 -> 결석 처리
                             elif start_date <= today_str <= end_date:
                                 if current_status == '':
                                     worksheet.update_cell(row_idx, worksheet.find("출석확인").col, "결석")
@@ -114,7 +103,6 @@ def load_fast_data():
             
             if updates_made:
                 load_fast_data.clear()
-                # 업데이트 후 다시 로드 (재귀 호출 방지를 위해 로직 반복 대신 단순 리턴 권장하지만, 여기선 다시 읽음)
                 rows = worksheet.get_all_values()
                 headers = rows[0]
                 data = rows[1:]
@@ -125,7 +113,6 @@ def load_fast_data():
 
         return df
     except Exception as e:
-        st.error(f"❌ 데이터 로드 오류: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
@@ -285,7 +272,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 67.0 (Robust)**")
+    st.markdown("**System Ver 68.0 (Vehicle Day Check)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -326,7 +313,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_test.iterrows(): st.write(f" - {row.iloc[1]}")
         else: st.success("✅ 오늘 예정된 심사는 없습니다.")
 
-# 2. 차량
+# 2. 차량 (등원요일 필터링 적용)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     now = get_korea_time()
@@ -334,6 +321,15 @@ elif menu == "🚍 차량 운행표":
     st.caption(f"📅 **오늘({today_char}요일)** 기준 리스트")
     if not df_students.empty:
         working_df = df_students.copy()
+        
+        # [NEW] 등원요일 체크 로직
+        if '등원요일' in working_df.columns:
+            # 등원요일이 비어있거나(매일), 오늘 요일이 포함된 경우만 남김
+            working_df = working_df[
+                working_df['등원요일'].astype(str).str.strip().eq('') | 
+                working_df['등원요일'].astype(str).str.contains(today_char)
+            ]
+            
         for col in ['등원차량', '등원시간', '등원장소', '하원차량', '하원시간', '하원장소']:
             if col in working_df.columns: working_df[col] = working_df[col].apply(lambda x: parse_schedule_for_today(x, today_char))
         if '차량이용여부' in working_df.columns: working_df = working_df[working_df['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
