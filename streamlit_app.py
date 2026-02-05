@@ -50,25 +50,24 @@ def load_fast_data():
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet("원생명단")
         
+        # API 호출 최소화: 한 번에 다 읽기
         rows = worksheet.get_all_values()
         if len(rows) < 2: return pd.DataFrame()
         
         headers = rows[0]
         data = rows[1:]
         df = pd.DataFrame(data, columns=headers)
-        
-        # 빈 컬럼 제거
         df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
         
-        # 휴관생 숨기기
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
             
-        # 장기일정 자동 적용
+        # 장기일정 처리
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
-            updates_made = False
+            updates_needed = [] # 배치 업데이트를 위한 리스트
             
+            # 읽어온 데이터(df) 상에서 로직 판단 (API 호출 X)
             for i, row in df.iterrows():
                 schedule = str(row.get('장기일정', '')).strip()
                 current_status = str(row.get('출석확인', '')).strip()
@@ -80,37 +79,37 @@ def load_fast_data():
                         start_date = start_date.strip()
                         end_date = end_date.strip()
                         
-                        try:
-                            cell = worksheet.find(row['이름'])
-                            if not cell: continue
-                            row_idx = cell.row
-                            
-                            if today_str > end_date:
+                        # 행 번호 계산 (헤더 1줄 + 데이터프레임 인덱스 + 1)
+                        # 주의: 필터링 된 df라면 원본 인덱스와 다를 수 있음. 
+                        # 안전을 위해 여기서 gspread find 대신, 이름 매칭 후 업데이트
+                        
+                        if today_str > end_date:
+                            # 삭제 대상
+                            cell = worksheet.find(row['이름']) # 이건 어쩔 수 없이 호출 (최소화 필요)
+                            if cell:
                                 target_col = worksheet.find("장기일정").col
-                                worksheet.update_cell(row_idx, target_col, "")
-                                updates_made = True
-                            elif start_date <= today_str <= end_date:
-                                if current_status == '':
+                                worksheet.update_cell(cell.row, target_col, "")
+                                load_fast_data.clear() # 캐시 초기화
+                                return load_fast_data() # 재귀 호출 (새로고침)
+                                
+                        elif start_date <= today_str <= end_date:
+                            if current_status == '':
+                                cell = worksheet.find(row['이름'])
+                                if cell:
+                                    row_idx = cell.row
+                                    # 여러 셀 업데이트를 한번에 하기는 복잡하므로 개별 처리하되
+                                    # 429 에러 방지를 위해 sleep 추가
                                     worksheet.update_cell(row_idx, worksheet.find("출석확인").col, "결석")
                                     worksheet.update_cell(row_idx, worksheet.find("비고").col, reason)
+                                    time.sleep(0.5) # 딜레이
                                     try: worksheet.update_cell(row_idx, worksheet.find("등원확인").col, "결석")
                                     except: pass
                                     try: worksheet.update_cell(row_idx, worksheet.find("하원확인").col, "결석")
                                     except: pass
-                                    updates_made = True
-                        except: pass 
+                                    
+                                    load_fast_data.clear()
+                                    return load_fast_data()
                     except: pass
-            
-            if updates_made:
-                load_fast_data.clear()
-                rows = worksheet.get_all_values()
-                headers = rows[0]
-                data = rows[1:]
-                df = pd.DataFrame(data, columns=headers)
-                df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
-                if '상태' in df.columns:
-                    df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
-
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -171,12 +170,15 @@ def update_check_status(student_name, col_name, status_value):
         else:
             cols_to_update = [col_name]
 
-        for target_col in cols_to_update:
+        # 헤더 한 번만 읽기 (API 절약)
+        headers = worksheet.row_values(1)
+        
+        for target_col_name in cols_to_update:
             try:
-                header_cell = worksheet.find(target_col)
-                col_num = header_cell.col
-                worksheet.update_cell(row_num, col_num, status_value)
-                time.sleep(0.5) 
+                if target_col_name in headers:
+                    col_num = headers.index(target_col_name) + 1
+                    worksheet.update_cell(row_num, col_num, status_value)
+                    time.sleep(0.5) # 안전 딜레이
             except: pass
         load_fast_data.clear() 
     except: pass
@@ -194,17 +196,22 @@ def register_long_term_schedule(student_name, start_date, end_date, reason):
         e_str = end_date.strftime("%Y-%m-%d")
         schedule_str = f"{s_str}~{e_str}:{reason}"
         
-        target_col = worksheet.find("장기일정").col
-        worksheet.update_cell(row_num, target_col, schedule_str)
+        headers = worksheet.row_values(1)
+        if "장기일정" in headers:
+            col_num = headers.index("장기일정") + 1
+            worksheet.update_cell(row_num, col_num, schedule_str)
         
         today_str = get_korea_time().strftime("%Y-%m-%d")
         if s_str <= today_str <= e_str:
-            try:
-                worksheet.update_cell(row_num, worksheet.find("출석확인").col, "결석")
-                worksheet.update_cell(row_num, worksheet.find("비고").col, reason)
-                worksheet.update_cell(row_num, worksheet.find("등원확인").col, "결석")
-                worksheet.update_cell(row_num, worksheet.find("하원확인").col, "결석")
-            except: pass
+            # 즉시 반영 시 API 최적화
+            col_map = {name: i+1 for i, name in enumerate(headers)}
+            
+            updates = []
+            if "출석확인" in col_map: worksheet.update_cell(row_num, col_map["출석확인"], "결석")
+            if "비고" in col_map: worksheet.update_cell(row_num, col_map["비고"], reason)
+            if "등원확인" in col_map: worksheet.update_cell(row_num, col_map["등원확인"], "결석")
+            if "하원확인" in col_map: worksheet.update_cell(row_num, col_map["하원확인"], "결석")
+            
         load_fast_data.clear()
         return True
     except: return False
@@ -272,7 +279,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 68.0 (Vehicle Day Check)**")
+    st.markdown("**System Ver 69.0 (API Safe)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -313,7 +320,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_test.iterrows(): st.write(f" - {row.iloc[1]}")
         else: st.success("✅ 오늘 예정된 심사는 없습니다.")
 
-# 2. 차량 (등원요일 필터링 적용)
+# 2. 차량
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     now = get_korea_time()
@@ -321,19 +328,14 @@ elif menu == "🚍 차량 운행표":
     st.caption(f"📅 **오늘({today_char}요일)** 기준 리스트")
     if not df_students.empty:
         working_df = df_students.copy()
-        
-        # [NEW] 등원요일 체크 로직
-        if '등원요일' in working_df.columns:
-            # 등원요일이 비어있거나(매일), 오늘 요일이 포함된 경우만 남김
-            working_df = working_df[
-                working_df['등원요일'].astype(str).str.strip().eq('') | 
-                working_df['등원요일'].astype(str).str.contains(today_char)
-            ]
-            
         for col in ['등원차량', '등원시간', '등원장소', '하원차량', '하원시간', '하원장소']:
             if col in working_df.columns: working_df[col] = working_df[col].apply(lambda x: parse_schedule_for_today(x, today_char))
         if '차량이용여부' in working_df.columns: working_df = working_df[working_df['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
         
+        # 등원요일 필터링
+        if '등원요일' in working_df.columns:
+            working_df = working_df[working_df['등원요일'].astype(str).str.strip().eq('') | working_df['등원요일'].astype(str).str.contains(today_char)]
+
         all_cars = sorted(list(set([x for x in working_df['등원차량'].unique().tolist() + working_df['하원차량'].unique().tolist() if x and str(x).strip() != ''])))
         if all_cars:
             selected_car = st.selectbox("배차 선택", all_cars)
@@ -555,12 +557,21 @@ elif menu == "🔐 관리자 모드":
                     try:
                         c = get_gspread_client()
                         ws = c.open_by_key(SHEET_ID).worksheet("원생명단")
+                        
+                        # [최적화] API 호출 1회로 줄임 (batch_clear)
+                        headers = ws.row_values(1)
                         ranges = []
-                        for col in ["등원확인", "하원확인", "출석확인", "비고"]:
-                            try:
-                                l = gspread.utils.rowcol_to_a1(1, ws.find(col).col).replace('1', '')
-                                ranges.append(f"{l}2:{l}1000")
-                            except: pass
-                        if ranges: ws.batch_clear(ranges); st.success("완료! 👋"); load_fast_data.clear(); time.sleep(2); st.rerun()
+                        for col_name in ["등원확인", "하원확인", "출석확인", "비고"]:
+                            if col_name in headers:
+                                col_idx = headers.index(col_name) + 1
+                                col_letter = gspread.utils.rowcol_to_a1(1, col_idx).replace('1', '')
+                                ranges.append(f"{col_letter}2:{col_letter}1000")
+                        
+                        if ranges: 
+                            ws.batch_clear(ranges)
+                            st.success("완료! 👋")
+                            load_fast_data.clear()
+                            time.sleep(2)
+                            st.rerun()
                     except: st.error("초기화 실패")
             else: st.error(msg)
