@@ -12,36 +12,32 @@ SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# [디자인 강제 고정 - 다크모드 원천 차단]
+# [디자인 강제 고정 - 다크모드 방지 및 기본 폰트 색상]
 st.markdown("""
     <style>
-        /* 1. 앱 전체 테마를 강제로 Light Mode로 고정 */
+        /* 1. 기본 테마 라이트모드 고정 */
         :root {
             color-scheme: light;
-            --background-color: #ffffff;
-            --secondary-background-color: #f0f2f6;
-            --text-color: #000000;
         }
         
-        /* 2. 메인 배경 흰색 고정 */
-        .stApp {
+        /* 2. 전체 배경 흰색 */
+        [data-testid="stAppViewContainer"], .stApp {
             background-color: #ffffff !important;
         }
         
-        /* 3. 글씨 색상 검정 고정 */
-        h1, h2, h3, h4, h5, h6, p, span, div, label {
+        /* 3. 사이드바 배경 회색 */
+        section[data-testid="stSidebar"] {
+            background-color: #f0f2f6 !important;
+        }
+        
+        /* 4. 기본 텍스트 색상 검정 (다크모드에서도 잘 보이게) */
+        h1, h2, h3, h4, h5, h6, p, span, div, label, li, .stMarkdown {
             color: #000000 !important;
         }
         
-        /* 4. 입력창 스타일 */
-        .stTextInput input, .stSelectbox div {
-            color: #000000 !important;
-            background-color: #ffffff !important;
-        }
-        
-        /* 5. [등원 카드 - 파랑] st.info 강제 스타일링 */
-        div[data-testid="stAlert"] {
-            padding: 0.5rem 1rem !important;
+        /* 5. 버튼 스타일 */
+        button {
+            border: 1px solid #ddd !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -162,7 +158,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 51.0 (Color Fix)**")
+    st.markdown("**System Ver 51.0 (Direct Color)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -269,7 +265,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [2] 차량 운행표 (색상 및 구분 명확화)
+# [2] 차량 운행표 (HTML 직접 스타일링으로 색상 강제)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     
@@ -277,7 +273,7 @@ elif menu == "🚍 차량 운행표":
     weekdays_kr = ["월", "화", "수", "목", "금", "토", "일"]
     today_char = weekdays_kr[now.weekday()]
     
-    st.caption(f"📅 **오늘({today_char}요일)** 스케줄 (🟦등원 / 🟨하원)")
+    st.caption(f"📅 **오늘({today_char}요일)** 시간순 전체 리스트 (🟦등원 / 🟨하원)")
 
     if not df_students.empty:
         working_df = df_students.copy()
@@ -348,48 +344,59 @@ elif menu == "🚍 차량 운행표":
                     st.subheader(f"⏰ {time_display}")
                     current_time_group = time_display
                 
-                # 색상 결정 (st.info / st.warning 사용)
-                # 다크모드에서도 색상이 보이도록 테마 강제 적용됨
+                # [HTML 스타일] 직접 색상 지정 (가장 강력한 방법)
                 if item['type'] == '등원':
-                    box_func = st.info
-                    icon_char = "🟦"
+                    # 파란색 테마
+                    bg_color = "#e3f2fd" # 연한 파랑
+                    border_color = "#2196f3" # 진한 파랑
+                    icon = "🟦"
                 else:
-                    box_func = st.warning
-                    icon_char = "🟨"
+                    # 노란색 테마
+                    bg_color = "#fff9c4" # 연한 노랑
+                    border_color = "#fbc02d" # 진한 노랑
+                    icon = "🟨"
                 
                 is_done = (item['status'] == '탑승')
                 is_absent = (item['status'] == '결석')
                 
-                # 카드 출력
-                with box_func(f"{icon_char} {item['type']}"):
-                    c1, c2, c3 = st.columns([3, 1, 1])
-                    
-                    with c1:
-                        # [중요] 이름 옆에 (등원/하원) 명시
-                        st.markdown(f"#### 🥋 {item['name']} ({item['type']})")
-                        st.write(f"📍 {item['loc']}")
-                        if is_done: st.caption("✅ 탑승 완료")
-                        if is_absent: st.caption("❌ 결석")
-                        
-                    with c2:
-                        if is_done:
-                            if st.button("취소", key=f"undo_{idx}_{item['name']}_{item['type']}"):
-                                update_check_status(item['name'], item['check_col'], '')
-                                st.rerun()
-                        else:
-                            if st.button("탑승", key=f"ride_{idx}_{item['name']}_{item['type']}"):
-                                update_check_status(item['name'], item['check_col'], '탑승')
-                                st.rerun()
-                                
-                    with c3:
-                        if is_absent:
-                            if st.button("복구", key=f"unabs_{idx}_{item['name']}_{item['type']}"):
-                                update_check_status(item['name'], item['check_col'], '')
-                                st.rerun()
-                        else:
-                            if st.button("결석", key=f"abs_{idx}_{item['name']}_{item['type']}"):
-                                update_check_status(item['name'], item['check_col'], '결석')
-                                st.rerun()
+                status_badge = ""
+                if is_done: status_badge = " <span style='color:green; font-weight:bold;'>[탑승완료]</span>"
+                if is_absent: status_badge = " <span style='color:red; font-weight:bold;'>[결석]</span>"
+
+                # HTML 카드 렌더링
+                st.markdown(f"""
+                <div style="
+                    background-color: {bg_color}; 
+                    padding: 15px; 
+                    border-left: 5px solid {border_color}; 
+                    border-radius: 5px; 
+                    margin-bottom: 10px;
+                    color: black;">
+                    <h4 style="margin:0; color:black;">{icon} {item['name']} ({item['type']}) {status_badge}</h4>
+                    <p style="margin:5px 0 0 0; color:#333;">📍 <b>{item['loc']}</b></p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # 버튼 영역 (카드 바로 아래)
+                c1, c2, c3 = st.columns([1, 1, 2])
+                with c1:
+                    if is_done:
+                        if st.button("취소", key=f"undo_{idx}_{item['name']}_{item['type']}"):
+                            update_check_status(item['name'], item['check_col'], '')
+                            st.rerun()
+                    else:
+                        if st.button("탑승", key=f"ride_{idx}_{item['name']}_{item['type']}"):
+                            update_check_status(item['name'], item['check_col'], '탑승')
+                            st.rerun()
+                with c2:
+                    if is_absent:
+                        if st.button("복구", key=f"unabs_{idx}_{item['name']}_{item['type']}"):
+                            update_check_status(item['name'], item['check_col'], '')
+                            st.rerun()
+                    else:
+                        if st.button("결석", key=f"abs_{idx}_{item['name']}_{item['type']}"):
+                            update_check_status(item['name'], item['check_col'], '결석')
+                            st.rerun()
 
         else:
             st.info("오늘 운행하는 차량이 없습니다.")
