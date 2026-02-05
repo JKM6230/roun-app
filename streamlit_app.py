@@ -52,19 +52,15 @@ def load_fast_data():
         df = pd.DataFrame(data)
         df = df.astype(str)
         
-        # 1. 휴관생 숨기기
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
             
-        # 2. 장기일정 자동 체크
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             updates_made = False
-            
             for i, row in df.iterrows():
                 schedule = str(row.get('장기일정', '')).strip()
                 current_status = str(row.get('출석확인', '')).strip()
-                
                 if schedule and "~" in schedule and ":" in schedule:
                     try:
                         dates, reason = schedule.split(":")
@@ -78,7 +74,6 @@ def load_fast_data():
                                 target_col = worksheet.find("장기일정").col
                                 worksheet.update_cell(cell.row, target_col, "")
                                 updates_made = True
-                        
                         elif start_date <= today_str <= end_date:
                             if current_status == '':
                                 cell = worksheet.find(row['이름'])
@@ -94,7 +89,6 @@ def load_fast_data():
                                         updates_made = True
                                     except: pass
                     except: pass
-            
             if updates_made:
                 load_fast_data.clear()
                 data = worksheet.get_all_records()
@@ -102,7 +96,6 @@ def load_fast_data():
                 df = df.astype(str)
                 if '상태' in df.columns:
                     df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
-
         return df
     except:
         return pd.DataFrame()
@@ -229,7 +222,6 @@ def archive_daily_attendance():
         for idx, row in df_daily.iterrows():
             status = row.get('출석확인', '')
             note = str(row.get('비고', '')).strip()
-            
             if status == '출석': mark = 'O'
             elif note and note != 'nan': mark = note
             elif status == '결석': mark = 'X'
@@ -269,7 +261,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 63.0 (Bus Red)**")
+    st.markdown("**System Ver 64.0 (Notice Color)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -282,16 +274,57 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# 1. 홈
+# 1. 홈 (공지사항 컬러 적용)
 if menu == "🏠 홈 대시보드":
     now = get_korea_time()
     weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
     st.markdown(f"<div style='text-align: right; font-size: 1.5em; font-weight: bold; margin-bottom: 20px;'>📅 {now.strftime('%m월 %d일')} {weekdays[now.weekday()]}</div>", unsafe_allow_html=True)
     st.header("📢 오늘의 작전 브리핑")
+    
     if not df_notice.empty and len(df_notice.columns) >= 2:
-        for i, row in df_notice.tail(10).iloc[::-1].iterrows():
-            if str(row.iloc[1]).strip(): st.info(f"**[공지]** {row.iloc[1]}")
+        recent_notices = df_notice.tail(10)
+        for i, row in recent_notices.iloc[::-1].iterrows():
+            content = str(row.iloc[1]).strip()
+            if not content: continue
+            
+            # [NEW] 공지사항 컬러링 로직
+            # 기본값: 초록색 (기타)
+            bg_color = "#e8f5e9" # 연한 초록
+            border_color = "#4caf50" # 진한 초록
+            icon = "✅"
+            
+            # 키워드 감지
+            if "[상담]" in content:
+                bg_color = "#ffebee" # 연한 빨강
+                border_color = "#ef5350" # 진한 빨강
+                icon = "📞"
+            elif "[도복]" in content:
+                bg_color = "#e3f2fd" # 연한 파랑
+                border_color = "#2196f3" # 진한 파랑
+                icon = "🥋"
+            elif "[심사]" in content or "심사" in content:
+                bg_color = "#fff9c4" # 연한 노랑
+                border_color = "#fbc02d" # 진한 노랑
+                icon = "🏆"
+                
+            # HTML 카드 출력
+            st.markdown(f"""
+            <div style="
+                background-color: {bg_color};
+                border-left: 5px solid {border_color};
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 10px;
+                color: black;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            ">
+                <div style="font-weight:bold; font-size:1.05em; margin-bottom:5px;">{icon} 공지</div>
+                <div style="white-space: pre-wrap;">{content}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
     else: st.info("등록된 공지사항이 없습니다.")
+    
     st.markdown("---")
     if not df_schedule.empty:
         today_test = df_schedule[pd.to_datetime(df_schedule.iloc[:,0].astype(str).str.replace('.','-'), errors='coerce').dt.date == now.date()]
@@ -300,7 +333,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_test.iterrows(): st.write(f" - {row.iloc[1]}")
         else: st.success("✅ 오늘 예정된 심사는 없습니다.")
 
-# 2. 차량 (결석 시 빨간색 강조 추가)
+# 2. 차량
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     now = get_korea_time()
@@ -332,14 +365,9 @@ elif menu == "🚍 차량 운행표":
                     st.subheader(f"⏰ {item['time'] or '시간 미정'}")
                     curr_time = item['time']
                 
-                # 기본 색상
                 bg, border, icon = ("#e3f2fd", "#2196f3", "🟦") if item['type'] == '등원' else ("#fff9c4", "#fbc02d", "🟨")
-                
-                # [NEW] 결석이면 빨간색으로 덮어쓰기
                 if item['status'] == '결석':
-                    bg = "#ffebee" # 연한 빨강
-                    border = "#ef5350" # 진한 빨강
-                    # icon은 버스/하원 구분을 위해 그대로 두거나 바꿀 수 있음. 여기선 색상으로 강조하므로 아이콘 유지
+                    bg, border = "#ffebee", "#ef5350"
                 
                 status_html = ""
                 if item['status'] == '탑승': status_html = "<span style='color:green;font-weight:bold;margin-left:10px;'>✅ 탑승완료</span>"
