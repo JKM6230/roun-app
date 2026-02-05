@@ -12,7 +12,7 @@ SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# [디자인 강제 고정 - 모바일 최적화]
+# [디자인 강제 고정]
 st.markdown("""
     <style>
         :root { color-scheme: light; }
@@ -39,7 +39,7 @@ def get_gspread_client():
     except Exception as e:
         return None
 
-# [데이터 로드] 휴관생 자동 필터링 + 장기일정 자동처리
+# [데이터 로드] - 지난 일정 자동 삭제 기능 포함
 @st.cache_data(ttl=5) 
 def load_fast_data():
     client = get_gspread_client()
@@ -55,34 +55,27 @@ def load_fast_data():
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
             
-        # 장기일정 자동 적용
+        # [자동 청소] 기간 지난 장기일정 삭제
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             updates_made = False
+            
             for i, row in df.iterrows():
                 schedule = str(row.get('장기일정', '')).strip()
-                if schedule and schedule != '':
+                if schedule and "~" in schedule:
                     try:
-                        if "~" in schedule and ":" in schedule:
-                            dates, reason = schedule.split(":")
-                            start_date, end_date = dates.split("~")
-                            
-                            # 기간 지남 -> 삭제
-                            if today_str > end_date:
-                                cell = worksheet.find(row['이름'])
-                                target_col = worksheet.find("장기일정").col
-                                worksheet.update_cell(cell.row, target_col, "")
-                                updates_made = True
-                            
-                            # 기간 중 -> 결석 처리
-                            elif start_date <= today_str <= end_date:
-                                if row.get('출석확인') == '':
-                                    cell = worksheet.find(row['이름'])
-                                    worksheet.update_cell(cell.row, worksheet.find("출석확인").col, "결석")
-                                    worksheet.update_cell(cell.row, worksheet.find("비고").col, reason)
-                                    updates_made = True
+                        dates, _ = schedule.split(":")
+                        _, end_date = dates.split("~")
+                        
+                        # 오늘 날짜가 종료일보다 크면 (지났으면) 삭제
+                        if today_str > end_date:
+                            cell = worksheet.find(row['이름'])
+                            target_col = worksheet.find("장기일정").col
+                            worksheet.update_cell(cell.row, target_col, "")
+                            updates_made = True
                     except: pass
             
+            # 삭제가 있었으면 데이터 갱신
             if updates_made:
                 data = worksheet.get_all_records()
                 df = pd.DataFrame(data)
@@ -110,7 +103,7 @@ def load_slow_data(sheet_name):
     except:
         return pd.DataFrame()
 
-# 상담일지 불러오기
+# 상담일지 로드
 def load_consultation_logs(student_name):
     client = get_gspread_client()
     try:
@@ -123,7 +116,7 @@ def load_consultation_logs(student_name):
     except:
         return pd.DataFrame()
 
-# 상담일지 기록하기
+# 상담일지 추가
 def add_consultation_log(student_name, content):
     client = get_gspread_client()
     try:
@@ -135,6 +128,7 @@ def add_consultation_log(student_name, content):
     except:
         return False
 
+# 상태 업데이트 함수
 def update_check_status(student_name, col_name, status_value):
     client = get_gspread_client()
     if not client: return
@@ -165,22 +159,47 @@ def update_check_status(student_name, col_name, status_value):
     except:
         pass
 
+# [NEW] 장기 일정 등록 및 즉시 적용 함수
 def register_long_term_schedule(student_name, start_date, end_date, reason):
     client = get_gspread_client()
-    if not client: return
+    if not client: return False
     try:
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet("원생명단")
         cell = worksheet.find(student_name)
         row_num = cell.row
-        schedule_str = f"{start_date}~{end_date}:{reason}"
+        
+        # 1. 장기일정 문자열 생성 (YYYY-MM-DD~YYYY-MM-DD:사유)
+        s_str = start_date.strftime("%Y-%m-%d")
+        e_str = end_date.strftime("%Y-%m-%d")
+        schedule_str = f"{s_str}~{e_str}:{reason}"
+        
+        # 2. 장기일정 컬럼 업데이트
         try:
-            target_col_cell = worksheet.find("장기일정")
-            col_num = target_col_cell.col
-            worksheet.update_cell(row_num, col_num, schedule_str)
-            load_fast_data.clear()
-            return True
-        except: return False
+            target_col = worksheet.find("장기일정").col
+            worksheet.update_cell(row_num, target_col, schedule_str)
+        except:
+            return False # 컬럼 없음
+            
+        # 3. [핵심] 오늘이 기간 내라면 '즉시' 결석 처리
+        today_str = get_korea_time().strftime("%Y-%m-%d")
+        if s_str <= today_str <= e_str:
+            try:
+                # 출석확인 -> 결석
+                c_col = worksheet.find("출석확인").col
+                worksheet.update_cell(row_num, c_col, "결석")
+                # 비고 -> 사유
+                n_col = worksheet.find("비고").col
+                worksheet.update_cell(row_num, n_col, reason)
+                # 등하원도 결석
+                v1_col = worksheet.find("등원확인").col
+                worksheet.update_cell(row_num, v1_col, "결석")
+                v2_col = worksheet.find("하원확인").col
+                worksheet.update_cell(row_num, v2_col, "결석")
+            except: pass
+            
+        load_fast_data.clear()
+        return True
     except: return False
 
 def archive_daily_attendance():
@@ -247,7 +266,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 60.0 (Card Restore)**")
+    st.markdown("**System Ver 61.0 (Instant Fix)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -333,7 +352,7 @@ elif menu == "🚍 차량 운행표":
         else: st.info("운행 차량 없음")
     else: st.error("데이터 로드 실패")
 
-# 3. 출석부 (카드 뷰로 복구)
+# 3. 출석부 (카드 뷰)
 elif menu == "📝 수련부 출석":
     st.header("📝 수련부별 출석 체크")
     if '수련부' in df_students.columns:
@@ -358,15 +377,10 @@ elif menu == "📝 수련부 출석":
                 note = row.get('비고', '')
                 is_checked = (status == '출석')
                 
-                # 색상 결정
-                if status == '출석':
-                    card_bg, card_border, status_badge = "#e8f5e9", "#4caf50", "✅ 출석완료"
-                elif status == '결석':
-                    card_bg, card_border, status_badge = "#ffebee", "#ef5350", "❌ 결석처리"
-                else:
-                    card_bg, card_border, status_badge = "#ffffff", "#dddddd", ""
+                if status == '출석': card_bg, card_border, status_badge = "#e8f5e9", "#4caf50", "✅ 출석완료"
+                elif status == '결석': card_bg, card_border, status_badge = "#ffebee", "#ef5350", "❌ 결석처리"
+                else: card_bg, card_border, status_badge = "#ffffff", "#dddddd", ""
 
-                # 차량 정보
                 bus_in = parse_schedule_for_today(row.get('등원차량', ''), today_char)
                 bus_out = parse_schedule_for_today(row.get('하원차량', ''), today_char)
                 bus_txt = f"🚌 {bus_in} " if bus_in else ""
@@ -375,7 +389,6 @@ elif menu == "📝 수련부 출석":
                 
                 note_html = f"<div style='margin-top:5px;padding:5px;background:#fff3cd;border-radius:4px;font-size:0.9em;'>📌 {note}</div>" if note and str(note) != 'nan' else ""
                 
-                # HTML 카드 출력
                 st.markdown(f"""
                 <div style="background-color:{card_bg};border-left:5px solid {card_border};padding:12px;border-radius:5px;margin-top:15px;margin-bottom:5px;box-shadow:0 1px 3px rgba(0,0,0,0.1);color:black !important;">
                     <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -387,7 +400,6 @@ elif menu == "📝 수련부 출석":
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 버튼
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.checkbox("출석확인", value=is_checked, key=f"att_{i}_{row['이름']}"):
@@ -400,7 +412,6 @@ elif menu == "📝 수련부 출석":
                     else:
                         if st.button("결석처리", key=f"abs_{i}"): update_check_status(row['이름'], "출석확인", '결석'); st.rerun()
                 
-                # 특이사항/장기일정 (기존 기능 유지)
                 with st.expander("🔽 특이사항 / 장기 일정 등록"):
                     t1, t2, t3, t4 = st.columns(4)
                     if t1.button("병결", key=f"s_{i}"): update_check_status(row['이름'], "비고", "병결"); st.rerun()
@@ -420,11 +431,11 @@ elif menu == "📝 수련부 출석":
                     r_l = st.text_input("사유", key=f"rl_{i}")
                     if d3.button("저장", key=f"sl_{i}"):
                         if register_long_term_schedule(row['이름'], s_d, e_d, r_l): st.success("저장됨"); time.sleep(1); st.rerun()
-                        else: st.error("실패")
+                        else: st.error("실패 (엑셀 '장기일정' 컬럼 확인)")
 
-# 4. 상담 로그 (입력형)
+# 4. 상담 로그
 elif menu == "📞 학부모 상담":
-    st.header("📞 학부모 상담 로그 (타임라인)")
+    st.header("📞 학부모 상담 로그")
     search_name_input = st.text_input("원생 이름 입력", placeholder="예: 김지안 (입력 후 엔터)")
     if search_name_input:
         if search_name_input in df_students['이름'].values:
