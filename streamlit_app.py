@@ -12,52 +12,36 @@ SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# [디자인 강제 고정 - 강력 모드]
+# [디자인 강제 고정 - 다크모드 원천 차단]
 st.markdown("""
     <style>
-        /* 1. 브라우저에게 '이 웹사이트는 라이트모드 전용이다'라고 선언 */
+        /* 1. 앱 전체 테마를 강제로 Light Mode로 고정 */
         :root {
             color-scheme: light;
+            --background-color: #ffffff;
+            --secondary-background-color: #f0f2f6;
+            --text-color: #000000;
         }
         
-        /* 2. 전체 배경 흰색 강제 */
-        [data-testid="stAppViewContainer"], .stApp {
+        /* 2. 메인 배경 흰색 고정 */
+        .stApp {
             background-color: #ffffff !important;
+        }
+        
+        /* 3. 글씨 색상 검정 고정 */
+        h1, h2, h3, h4, h5, h6, p, span, div, label {
             color: #000000 !important;
         }
         
-        /* 3. 사이드바 배경 회색 */
-        section[data-testid="stSidebar"] {
-            background-color: #f0f2f6 !important;
-        }
-        
-        /* 4. 모든 텍스트 검정 (다크모드 폰트 흰색 방지) */
-        h1, h2, h3, h4, h5, h6, p, span, div, label, li, .stMarkdown {
-            color: #000000 !important;
-        }
-        
-        /* 5. 입력창, 선택창 배경 및 글씨 */
-        .stTextInput input, .stSelectbox div, .stNumberInput input {
+        /* 4. 입력창 스타일 */
+        .stTextInput input, .stSelectbox div {
             color: #000000 !important;
             background-color: #ffffff !important;
         }
         
-        /* 6. [등원 카드] 파란색 배경 (st.info) */
-        div[data-testid="stAlert"][class*="st-ae"] {
-            background-color: #d1ecf1 !important;
-            color: #0c5460 !important;
-        }
-        div[data-testid="stAlert"][class*="st-ae"] * {
-            color: #0c5460 !important;
-        }
-        
-        /* 7. [하원 카드] 노란색 배경 (st.warning) */
-        div[data-testid="stAlert"][class*="st-ak"] {
-            background-color: #fff3cd !important;
-            color: #856404 !important;
-        }
-        div[data-testid="stAlert"][class*="st-ak"] * {
-            color: #856404 !important;
+        /* 5. [등원 카드 - 파랑] st.info 강제 스타일링 */
+        div[data-testid="stAlert"] {
+            padding: 0.5rem 1rem !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -178,7 +162,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 50.0 (Label Fix)**")
+    st.markdown("**System Ver 51.0 (Color Fix)**")
     
     st.write("---")
     st.write("#### 📡 연결 상태")
@@ -193,7 +177,7 @@ with st.sidebar:
         "🏠 홈 대시보드", 
         "🚍 차량 운행표", 
         "📝 수련부 출석", 
-        "📉 오늘의 결석자",
+        "📉 오늘의 결석자", 
         "🧠 기질/훈육 통합",
         "📈 승급심사 관리",
         "🎂 이달의 생일",
@@ -285,7 +269,7 @@ if menu == "🏠 홈 대시보드":
             for i, row in today_birth.iterrows():
                 st.warning(f"🎉 **{row['이름']}**")
 
-# [2] 차량 운행표 (이름 옆에 등원/하원 표시)
+# [2] 차량 운행표 (색상 및 구분 명확화)
 elif menu == "🚍 차량 운행표":
     st.header("🚍 실시간 통합 운행표")
     
@@ -293,7 +277,7 @@ elif menu == "🚍 차량 운행표":
     weekdays_kr = ["월", "화", "수", "목", "금", "토", "일"]
     today_char = weekdays_kr[now.weekday()]
     
-    st.caption(f"📅 **오늘({today_char}요일)** 시간순 전체 리스트 (🟦등원 / 🟨하원)")
+    st.caption(f"📅 **오늘({today_char}요일)** 스케줄 (🟦등원 / 🟨하원)")
 
     if not df_students.empty:
         working_df = df_students.copy()
@@ -364,23 +348,24 @@ elif menu == "🚍 차량 운행표":
                     st.subheader(f"⏰ {time_display}")
                     current_time_group = time_display
                 
-                # 박스 색상
+                # 색상 결정 (st.info / st.warning 사용)
+                # 다크모드에서도 색상이 보이도록 테마 강제 적용됨
                 if item['type'] == '등원':
                     box_func = st.info
-                    label = "🟦 등원"
+                    icon_char = "🟦"
                 else:
                     box_func = st.warning
-                    label = "🟨 하원"
+                    icon_char = "🟨"
                 
                 is_done = (item['status'] == '탑승')
                 is_absent = (item['status'] == '결석')
                 
-                # 카드 출력 (헤더는 그대로 두고, 이름 옆에 (등원)/(하원) 추가)
-                with box_func(f"{label}"): 
+                # 카드 출력
+                with box_func(f"{icon_char} {item['type']}"):
                     c1, c2, c3 = st.columns([3, 1, 1])
                     
                     with c1:
-                        # [NEW] 이름 옆에 (등원/하원) 명시적으로 표시
+                        # [중요] 이름 옆에 (등원/하원) 명시
                         st.markdown(f"#### 🥋 {item['name']} ({item['type']})")
                         st.write(f"📍 {item['loc']}")
                         if is_done: st.caption("✅ 탑승 완료")
@@ -452,11 +437,8 @@ elif menu == "📝 수련부 출석":
                     current_note = row.get(note_col, '')
                     is_checked = (current_val == '출석')
                     
-                    # 차량 정보 표시
                     bus_in = parse_schedule_for_today(row.get('등원차량', ''), today_char)
-                    time_in = parse_schedule_for_today(row.get('등원시간', ''), today_char)
                     bus_out = parse_schedule_for_today(row.get('하원차량', ''), today_char)
-                    time_out = parse_schedule_for_today(row.get('하원시간', ''), today_char)
                     
                     bus_info_str = ""
                     if bus_in: bus_info_str += f"🚌 등원: {bus_in} "
