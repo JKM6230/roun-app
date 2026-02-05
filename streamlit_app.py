@@ -41,28 +41,29 @@ def get_gspread_client():
         st.error(f"❌ 인증 오류: {e}")
         return None
 
-# [진단 기능 강화] 에러 발생 시 상세 내용을 화면에 출력
+# [강력해진 데이터 로드] 에러 방지 로직 적용 (get_all_values 사용)
 @st.cache_data(ttl=5) 
 def load_fast_data():
     client = get_gspread_client()
     if not client: return pd.DataFrame()
     try:
         sh = client.open_by_key(SHEET_ID)
-        # 1. 시트 존재 확인
-        try:
-            worksheet = sh.worksheet("원생명단")
-        except gspread.exceptions.WorksheetNotFound:
-            st.error("❌ '원생명단' 시트를 찾을 수 없습니다. 엑셀 아래 탭 이름을 확인해주세요.")
-            return pd.DataFrame()
-            
-        data = worksheet.get_all_records()
+        worksheet = sh.worksheet("원생명단")
         
-        if not data:
-            st.warning("⚠️ '원생명단' 시트에 데이터가 없거나, 첫 번째 줄(제목)이 비어있습니다.")
+        # [핵심 변경] get_all_records -> get_all_values (빈 헤더 허용)
+        rows = worksheet.get_all_values()
+        
+        if len(rows) < 2: # 데이터가 없거나 헤더만 있는 경우
             return pd.DataFrame()
             
-        df = pd.DataFrame(data)
-        df = df.astype(str)
+        headers = rows[0] # 첫 줄은 제목
+        data = rows[1:]   # 나머지는 데이터
+        
+        # 데이터프레임 생성 (중복 컬럼명 자동 처리)
+        df = pd.DataFrame(data, columns=headers)
+        
+        # 빈 컬럼 이름이 있을 경우 제거 (공백 헤더 제거)
+        df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
         
         # 휴관생 숨기기
         if '상태' in df.columns:
@@ -72,12 +73,13 @@ def load_fast_data():
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             updates_made = False
+            
+            # gspread 업데이트를 위한 인덱싱 (DataFrame 인덱스와 시트 행 번호 매칭)
+            # 안전하게 이름으로 행을 찾아서 업데이트
             for i, row in df.iterrows():
                 schedule = str(row.get('장기일정', '')).strip()
                 current_status = str(row.get('출석확인', '')).strip()
                 
-                # gspread 행 번호 (헤더1 + 인덱스0 + 1 = i+2)
-                # 단, 필터링 전 원본 인덱스를 찾아야 안전함. 여기서는 이름으로 검색
                 if schedule and "~" in schedule and ":" in schedule:
                     try:
                         dates, reason = schedule.split(":")
@@ -85,38 +87,45 @@ def load_fast_data():
                         start_date = start_date.strip()
                         end_date = end_date.strip()
                         
-                        cell = worksheet.find(row['이름']) # 이름으로 정확한 위치 찾기
-                        if not cell: continue
-                        row_idx = cell.row
-                        
-                        if today_str > end_date:
-                            target_col = worksheet.find("장기일정").col
-                            worksheet.update_cell(row_idx, target_col, "")
-                            updates_made = True
-                        elif start_date <= today_str <= end_date:
-                            if current_status == '':
-                                worksheet.update_cell(row_idx, worksheet.find("출석확인").col, "결석")
-                                worksheet.update_cell(row_idx, worksheet.find("비고").col, reason)
-                                try: worksheet.update_cell(row_idx, worksheet.find("등원확인").col, "결석")
-                                except: pass
-                                try: worksheet.update_cell(row_idx, worksheet.find("하원확인").col, "결석")
-                                except: pass
+                        # 시트에서 해당 원생의 행 번호 찾기 (이름 기준)
+                        try:
+                            cell = worksheet.find(row['이름'])
+                            if not cell: continue
+                            row_idx = cell.row
+                            
+                            # 기간 지남 -> 삭제
+                            if today_str > end_date:
+                                target_col = worksheet.find("장기일정").col
+                                worksheet.update_cell(row_idx, target_col, "")
                                 updates_made = True
-                    except Exception as e:
-                        # 장기일정 처리 중 에러는 무시하되 로그
-                        print(f"Schedule Error: {e}")
-                        pass
+                            
+                            # 기간 중 -> 결석 처리
+                            elif start_date <= today_str <= end_date:
+                                if current_status == '':
+                                    worksheet.update_cell(row_idx, worksheet.find("출석확인").col, "결석")
+                                    worksheet.update_cell(row_idx, worksheet.find("비고").col, reason)
+                                    try: worksheet.update_cell(row_idx, worksheet.find("등원확인").col, "결석")
+                                    except: pass
+                                    try: worksheet.update_cell(row_idx, worksheet.find("하원확인").col, "결석")
+                                    except: pass
+                                    updates_made = True
+                        except: pass 
+                    except: pass
             
             if updates_made:
                 load_fast_data.clear()
-                data = worksheet.get_all_records()
-                df = pd.DataFrame(data)
-                df = df.astype(str)
+                # 업데이트 후 다시 로드 (재귀 호출 방지를 위해 로직 반복 대신 단순 리턴 권장하지만, 여기선 다시 읽음)
+                rows = worksheet.get_all_values()
+                headers = rows[0]
+                data = rows[1:]
+                df = pd.DataFrame(data, columns=headers)
+                df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
                 if '상태' in df.columns:
                     df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
+
         return df
     except Exception as e:
-        st.error(f"❌ 데이터 로드 중 치명적 오류: {e}")
+        st.error(f"❌ 데이터 로드 오류: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
@@ -132,9 +141,7 @@ def load_slow_data(sheet_name):
         data = rows[1:]
         df = pd.DataFrame(data, columns=headers)
         return df
-    except Exception as e:
-        # 공지사항 등이 없어도 앱은 켜져야 하므로 경고만
-        # st.warning(f"'{sheet_name}' 로드 실패: {e}") 
+    except:
         return pd.DataFrame()
 
 def load_consultation_logs(student_name):
@@ -142,8 +149,9 @@ def load_consultation_logs(student_name):
     try:
         sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet("상담일지")
-        data = ws.get_all_records()
-        df = pd.DataFrame(data)
+        rows = ws.get_all_values()
+        if len(rows) < 2: return pd.DataFrame()
+        df = pd.DataFrame(rows[1:], columns=rows[0])
         target_df = df[df['이름'] == student_name]
         return target_df.iloc[::-1]
     except: return pd.DataFrame()
@@ -184,8 +192,7 @@ def update_check_status(student_name, col_name, status_value):
                 time.sleep(0.5) 
             except: pass
         load_fast_data.clear() 
-    except Exception as e:
-        st.error(f"업데이트 실패: {e}")
+    except: pass
 
 def register_long_term_schedule(student_name, start_date, end_date, reason):
     client = get_gspread_client()
@@ -224,9 +231,11 @@ def archive_daily_attendance():
         try: ws_monthly = sh.worksheet("월간출석부")
         except: return False, "'월간출석부' 시트가 없습니다."
 
-        daily_data = ws_daily.get_all_records()
-        if not daily_data: return False, "데이터가 없습니다."
-        df_daily = pd.DataFrame(daily_data)
+        daily_data = ws_daily.get_all_values()
+        if len(daily_data) < 2: return False, "데이터가 없습니다."
+        
+        headers = daily_data[0]
+        df_daily = pd.DataFrame(daily_data[1:], columns=headers)
         
         names = df_daily['이름'].tolist()
         name_col_data = [['이름']] + [[n] for n in names]
@@ -239,7 +248,7 @@ def archive_daily_attendance():
             status = row.get('출석확인', '')
             note = str(row.get('비고', '')).strip()
             if status == '출석': mark = 'O'
-            elif note and note != 'nan': mark = note
+            elif note and note != 'nan' and note != '': mark = note
             elif status == '결석': mark = 'X'
             else: mark = ''
             log_column.append(mark)
@@ -276,7 +285,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 66.0 (Debug)**")
+    st.markdown("**System Ver 67.0 (Robust)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -302,9 +311,7 @@ if menu == "🏠 홈 대시보드":
             content = str(row.iloc[1]).strip()
             if not content: continue
             
-            bg_color = "#e8f5e9" # 기본 초록
-            border_color = "#4caf50"
-            icon = "✅"
+            bg_color, border_color, icon = "#e8f5e9", "#4caf50", "✅"
             if "[상담]" in content: bg_color, border_color, icon = "#ffebee", "#ef5350", "📞"
             elif "[도복]" in content: bg_color, border_color, icon = "#e3f2fd", "#2196f3", "🥋"
             elif "[심사]" in content or "심사" in content: bg_color, border_color, icon = "#fff9c4", "#fbc02d", "🏆"
@@ -374,7 +381,7 @@ elif menu == "🚍 차량 운행표":
                         if st.button("결석", key=f"a_{key_base}"): update_check_status(item['name'], item['check_col'], '결석'); st.rerun()
                 st.write("")
         else: st.info("운행 차량 없음")
-    else: st.error(f"❌ 데이터 로드 실패. '원생명단' 시트가 존재하는지 확인해주세요.")
+    else: st.error("데이터 로드 실패")
 
 # 3. 출석부
 elif menu == "📝 수련부 출석":
