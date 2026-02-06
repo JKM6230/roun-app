@@ -230,7 +230,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 5.4 (Model Fixed)**")
+    st.markdown("**System Ver 5.5 (Flash Model)**")
     st.write("---")
     
     if GEMINI_API_KEY:
@@ -238,6 +238,15 @@ with st.sidebar:
             genai.configure(api_key=GEMINI_API_KEY)
         except Exception as e:
             st.error(f"AI 키 오류: {e}")
+    
+    # [비상용] 사용 가능한 모델 확인 버튼
+    with st.expander("🔧 AI 모델 디버깅"):
+        if st.button("사용 가능한 모델 목록 확인"):
+            try:
+                models = [m.name for m in genai.list_models()]
+                st.write(models)
+            except Exception as e:
+                st.error(f"확인 불가: {e}")
 
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -464,7 +473,7 @@ elif menu == "🏆 정권연합선수반":
                             st.success("저장 완료")
                         except: st.error("저장 실패 (시트 확인)")
             
-            # [Tab 2] AI 분석 (모델명 수정 적용됨)
+            # [Tab 2] AI 분석 (모델명: gemini-1.5-flash)
             with tab2:
                 st.subheader("📹 AI 분석 및 아카이브")
                 
@@ -498,8 +507,8 @@ elif menu == "🏆 정권연합선수반":
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # [수정됨] 안정적인 모델명 사용
-                                model = genai.GenerativeModel('gemini-1.5-pro')
+                                # [수정됨] 가장 안정적인 모델명 사용
+                                model = genai.GenerativeModel('gemini-1.5-flash')
                                 res = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
                                 st.markdown("### 📝 분석 결과")
                                 st.write(res.text)
