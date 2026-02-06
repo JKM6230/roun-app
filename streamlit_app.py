@@ -13,6 +13,10 @@ import os
 # ==========================================
 SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
+# [설정] Gemini API Key (직접 입력됨)
+# 주의: 이 코드가 공개된 곳에 올라가지 않도록 관리하십시오.
+GEMINI_API_KEY = "AIzaSyAlGk_zCkGxrVzx51UoHwuWaSaD-M7QKY8"
+
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
 # [디자인 스타일]
@@ -45,7 +49,7 @@ def get_gspread_client():
         return None
 
 # ==========================================
-# [기존 데이터 로드 함수들 유지]
+# [데이터 로드 함수들]
 # ==========================================
 @st.cache_data(ttl=5) 
 def load_fast_data():
@@ -63,7 +67,7 @@ def load_fast_data():
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
         
-        # 장기일정 로직 (기존 유지)
+        # 장기일정 로직
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             for i, row in df.iterrows():
@@ -152,7 +156,6 @@ def register_long_term_schedule(student_name, start_date, end_date, reason):
     except: return False
 
 def archive_daily_attendance():
-    # (기존 마감 기능 유지)
     client = get_gspread_client()
     if not client: return False, "연결 실패"
     try:
@@ -197,7 +200,6 @@ def parse_schedule_for_today(raw, day_char):
             if day_char in p[1]: return p[0].strip()
     return ""
 
-# 선수반 등록 함수 (추가됨)
 def register_athlete(student_name, team_type):
     client = get_gspread_client()
     if not client: return False
@@ -227,29 +229,27 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 5.0 (Full Restore)**")
+    st.markdown("**System Ver 5.1 (API Embedded)**")
     st.write("---")
     
-    # 1. AI 키 자동 로드 (secrets.toml)
-    if "GEMINI" in st.secrets and "api_key" in st.secrets["GEMINI"]:
-        api_key_input = st.secrets["GEMINI"]["api_key"]
-        if api_key_input: genai.configure(api_key=api_key_input)
-    else:
-        # 키가 없으면 입력창 표시
-        api_key_input = st.text_input("AI Key 입력", type="password")
-        if api_key_input: genai.configure(api_key=api_key_input)
+    # [수정됨] AI 설정: 키가 코드에 있으므로 바로 연결 시도
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            # st.success("AI 시스템 가동 중") # 공간 절약을 위해 메시지 생략 가능
+        except Exception as e:
+            st.error(f"AI 키 오류: {e}")
 
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
         time.sleep(10)
         st.rerun()
 
-    # [메뉴 완전 복구 + 선수반 추가]
     menu_list = [
         "🏠 홈 대시보드", 
         "🚍 차량 운행표", 
         "📝 수련부 출석", 
-        "🏆 정권연합선수반",  # <-- 여기가 추가된 위치
+        "🏆 정권연합선수반", 
         "📞 학부모 상담", 
         "📉 오늘의 결석자", 
         "🧠 기질/훈육 통합", 
@@ -300,7 +300,6 @@ elif menu == "🚍 차량 운행표":
     
     if not df_students.empty:
         w_df = df_students.copy()
-        # 오늘 요일 필터링 및 파싱 로직 복구
         if '등원요일' in w_df.columns:
             w_df = w_df[w_df['등원요일'].astype(str).str.strip().eq('') | w_df['등원요일'].astype(str).str.contains(today_char)]
         
@@ -377,9 +376,7 @@ elif menu == "📝 수련부 출석":
                         st.rerun()
         else: st.info("명단 없음")
 
-# =========================================================
-# [4. 정권연합 선수반 - 완전 통합 기능]
-# =========================================================
+# 4. 정권연합 선수반 (통합 기능)
 elif menu == "🏆 정권연합선수반":
     st.header("🏆 정권연합 2026 시즌 선수단 관제")
     
@@ -407,7 +404,6 @@ elif menu == "🏆 정권연합선수반":
 
     # 4-2. 훈련 및 AI 분석
     elif sub_menu == "🏋️ 훈련/AI 분석":
-        # 훈련 DB
         training_db = {
             "비시즌": ["🧘‍♂️ 회복/가동성", "- 폼롤러 스트레칭", "- 가벼운 조깅"],
             "준비기": ["🏗️ 기초체력", "- 서킷 트레이닝", "- 기본동작 반복"],
@@ -415,7 +411,6 @@ elif menu == "🏆 정권연합선수반":
         }
         nlp_db = {"지면반력": "발바닥으로 지면을 강하게 미세요.", "시선": "목표를 끝까지 응시하세요."}
 
-        # 선수 선택 (연합원 포함)
         c1, c2 = st.columns(2)
         base_list = df_students[df_students['수련부'].astype(str).str.contains('선수|시범|입시', case=False)]['이름'].tolist()
         
@@ -458,7 +453,6 @@ elif menu == "🏆 정권연합선수반":
         # [Tab 2] AI 분석
         with tab2:
             st.subheader("📹 AI 분석")
-            # 링크 저장
             with st.expander("영상 링크 저장"):
                 lnk = st.text_input("URL")
                 note = st.text_input("메모")
@@ -470,10 +464,10 @@ elif menu == "🏆 정권연합선수반":
                         st.success("저장됨")
                     except: st.error("오류")
             
-            # 파일 분석
             st.write("---")
+            # [API Key 자동 적용됨]
             uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
-            if uf and api_key_input:
+            if uf and GEMINI_API_KEY:
                 st.video(uf)
                 if st.button("🚀 AI 분석 시작"):
                     with st.spinner("분석 중..."):
@@ -488,7 +482,7 @@ elif menu == "🏆 정권연합선수반":
                             st.write(res.text)
                             tfile.close(); os.unlink(tfile.name)
                         except Exception as e: st.error(f"오류: {e}")
-            elif uf and not api_key_input: st.warning("키 없음")
+            elif uf and not GEMINI_API_KEY: st.warning("키가 설정되지 않았습니다.")
 
         # [Tab 3] 조회
         with tab3:
@@ -500,7 +494,6 @@ elif menu == "🏆 정권연합선수반":
                     df = pd.DataFrame(d[1:], columns=d[0])
                     st.dataframe(df[df['이름']==t_name])
                 except: st.warning("데이터 없음")
-
 
 # 5. 상담
 elif menu == "📞 학부모 상담":
@@ -550,7 +543,6 @@ elif menu == "📈 승급심사 관리":
 # 9. 생일
 elif menu == "🎂 이달의 생일":
     st.header("🎂 이달의 생일자")
-    # (생략된 로직이 있다면 여기에 추가, 기본 틀 유지)
     st.info("기능 준비 중")
 
 # 10. 관리자
