@@ -7,6 +7,7 @@ import time
 import google.generativeai as genai
 import tempfile
 import os
+import importlib.metadata # 버전 확인용
 
 # ==========================================
 # [설정] 구글 시트 ID & API KEY
@@ -220,9 +221,18 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 6.1 (Debug Mode)**")
+    # [버전 확인용 코드]
+    try:
+        ai_version = importlib.metadata.version("google-generativeai")
+        st.caption(f"🔧 AI Tool Ver: {ai_version}")
+        if ai_version < "0.7.0":
+            st.error("⚠️ 버전이 낮습니다! (0.7.0 이상 필요)")
+    except:
+        st.error("⚠️ AI 도구가 설치되지 않았습니다.")
+
     st.write("---")
     
+    # AI 연결
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
@@ -407,17 +417,20 @@ elif menu == "🏆 정권연합선수반":
             
             with tab2:
                 st.subheader("📹 AI 분석 (자동 복구 모드)")
+                with st.expander("📂 링크 저장"):
+                    lnk = st.text_input("유튜브 URL")
+                    note = st.text_input("메모")
+                    if lnk: st.video(lnk)
+                    if st.button("링크 저장"):
+                        try:
+                            client = get_gspread_client()
+                            ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
+                            ws.append_row([datetime.now().strftime("%Y-%m-%d"), t_name, "정권연합", "링크", 0,0,0,0,0, "아카이브", 0, note, lnk])
+                            st.success("저장됨")
+                        except: st.error("오류")
                 
-                # [디버깅] 사용 가능한 모델 확인 버튼
-                if st.button("❓ 내 키로 사용 가능한 모델 확인하기 (디버깅)"):
-                    try:
-                        available = [m.name for m in genai.list_models()]
-                        st.code(available)
-                    except Exception as e:
-                        st.error(f"키 인증 실패 또는 라이브러리 버전 문제: {e}")
-                        st.info("💡 해결법: requirements.txt 파일에 'google-generativeai>=0.7.0'이 있는지 꼭 확인하세요.")
-
                 st.write("---")
+                st.write("### 🤖 AI 영상 분석")
                 uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
                 if uf:
                     st.video(uf)
@@ -429,10 +442,10 @@ elif menu == "🏆 정권연합선수반":
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # 모델 자동 선택
+                                # [★핵심] 모델 자동 선택 로직
                                 response = None
-                                # 최신 모델부터 구형 모델까지 순서대로 시도
-                                models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.5-flash-latest", "gemini-pro"]
+                                models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+                                last_err = ""
                                 
                                 for m_name in models:
                                     try:
@@ -441,16 +454,19 @@ elif menu == "🏆 정권연합선수반":
                                         if response:
                                             st.success(f"✅ 분석 성공 ({m_name} 모델 사용)")
                                             break
-                                    except: continue
+                                    except Exception as e:
+                                        last_err = str(e)
+                                        continue 
                                 
                                 if response:
                                     st.markdown("### 📝 분석 결과")
                                     st.write(response.text)
                                 else:
-                                    st.error("모든 AI 모델 연결 실패. (라이브러리 버전을 0.7.0 이상으로 업데이트 해주세요.)")
+                                    st.error(f"모든 AI 모델 연결 실패. 오류: {last_err}")
+                                    st.info("💡 팁: requirements.txt 파일을 수정하고 앱을 재부팅하세요.")
                                 
                                 tfile.close(); os.unlink(tfile.name)
-                            except Exception as e: st.error(f"오류: {e}")
+                            except Exception as e: st.error(f"치명적 오류: {e}")
 
             with tab3:
                 if st.button("기록 불러오기"):
