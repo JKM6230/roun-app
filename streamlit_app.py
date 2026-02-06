@@ -230,7 +230,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 5.3 (YouTube)**")
+    st.markdown("**System Ver 5.4 (Model Fixed)**")
     st.write("---")
     
     if GEMINI_API_KEY:
@@ -464,7 +464,7 @@ elif menu == "🏆 정권연합선수반":
                             st.success("저장 완료")
                         except: st.error("저장 실패 (시트 확인)")
             
-            # [Tab 2] AI 분석 (업데이트: 유튜브 링크 재생 기능 추가)
+            # [Tab 2] AI 분석 (모델명 수정 적용됨)
             with tab2:
                 st.subheader("📹 AI 분석 및 아카이브")
                 
@@ -472,7 +472,6 @@ elif menu == "🏆 정권연합선수반":
                     lnk = st.text_input("유튜브 링크 입력 (즉시 재생 가능)")
                     note = st.text_input("영상 메모")
                     
-                    # [추가됨] 링크가 있으면 바로 보여주기
                     if lnk:
                         st.video(lnk)
                         st.info("ℹ️ 유튜브 링크는 저장 및 시청만 가능하며, AI 분석을 하려면 아래에 파일을 직접 업로드해야 합니다.")
@@ -499,7 +498,8 @@ elif menu == "🏆 정권연합선수반":
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                                # [수정됨] 안정적인 모델명 사용
+                                model = genai.GenerativeModel('gemini-1.5-pro')
                                 res = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
                                 st.markdown("### 📝 분석 결과")
                                 st.write(res.text)
