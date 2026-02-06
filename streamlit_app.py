@@ -221,7 +221,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 7.0 (Gemini 3.0 Pro)**")
+    st.markdown("**System Ver 8.0 (Micro-Analysis)**")
     
     try:
         ver = importlib.metadata.version("google-generativeai")
@@ -236,7 +236,6 @@ with st.sidebar:
         except Exception as e:
             st.error(f"키 설정 오류: {e}")
 
-    # [모델 진단 버튼]
     with st.expander("🔑 AI 연결 테스트"):
         if st.button("내 키로 사용 가능한 모델 조회"):
             try:
@@ -394,7 +393,7 @@ elif menu == "🏆 정권연합선수반":
             st.error("⚠️ 등록된 선수가 없습니다. 먼저 등록해주세요.")
         else:
             t_name = st.selectbox("선수 선택", athlete_list)
-            tab1, tab2, tab3 = st.tabs(["📝 채점/기록", "📹 AI 영상분석", "📊 기록 조회"])
+            tab1, tab2, tab3 = st.tabs(["📝 채점/기록", "📹 AI 영상분석 (초정밀)", "📊 기록 조회"])
 
             with tab1:
                 st.subheader(f"📝 {t_name} 훈련 기록")
@@ -426,7 +425,7 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("저장 실패")
             
             with tab2:
-                st.subheader("📹 AI 분석 (Gemini 3.0 Pro)")
+                st.subheader("📹 AI 초정밀 분석 (Gemini 3.0 Pro)")
                 with st.expander("📂 링크 저장"):
                     lnk = st.text_input("유튜브 URL")
                     note = st.text_input("메모")
@@ -440,54 +439,75 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("오류")
                 
                 st.write("---")
-                st.write("### 🤖 AI 영상 분석")
+                st.write("### 🤖 파일 업로드 분석")
                 uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
                 if uf:
                     st.video(uf)
-                    if st.button("🚀 AI 분석 시작"):
-                        with st.spinner("AI 심판이 분석 중입니다..."):
+                    if st.button("🚀 AI 분석 시작 (초정밀 모드)"):
+                        with st.spinner("AI 심판이 프레임 단위로 분석 중입니다... (시간 소요됨)"):
                             try:
                                 tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                                 tfile.write(uf.read())
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # [★수정됨] 3.0 Pro (Preview) 최우선 적용
+                                # [★핵심] 초정밀 프롬프트 적용
                                 response = None
-                                # 요청하신 대로 3.0 Pro Preview를 가장 먼저 시도합니다.
-                                models = ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+                                # Gemini 3.0 Pro 우선
+                                models = ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.0-flash"]
                                 last_err = ""
                                 
+                                # 프롬프트: 현미경 분석 지시
+                                detailed_prompt = """
+                                당신은 세계 최고 권위의 태권도 기술 심의회 의장입니다.
+                                이 영상을 '현미경 보듯이' 아주 세밀하게, 타임스탬프별로 쪼개서 분석하십시오.
+                                추상적인 설명은 금지합니다. 동작 하나하나의 각도, 높이, 속도를 기계적으로 분석하세요.
+
+                                [필수 출력 형식]
+                                
+                                ### 1. 총평 및 점수 요약
+                                * **정확도(4.0):** [점수]
+                                * **표현력(6.0):** [점수]
+                                
+                                ### 2. 타임라인별 초정밀 분석 (Micro-Analysis)
+                                *반드시 영상의 시작부터 끝까지 주요 동작이 나올 때마다 아래 형식을 반복하세요.*
+                                
+                                * **[00:00 ~ 00:xx] 준비 및 시작**
+                                    * 시선: [안정적/불안]
+                                    * 호흡: [적절/부적절]
+                                    * 준비서기: 발 너비 및 손의 위치 평가
+                                * **[00:xx ~ 00:xx] [동작명, 예: 아래막기]**
+                                    * **손/팔:** 예비동작의 크기, 회전, 막는 위치의 정확성 (명치/인중 등)
+                                    * **발/서기:** 앞굽이/뒷굽이의 보폭, 무릎의 각도, 뒷발의 틀어짐 여부
+                                    * **중심이동:** 엉덩이의 높낮이 변화 여부 (출렁거림 체크)
+                                    * **감점 요인:** (없으면 '양호', 있으면 구체적 지적)
+                                
+                                ...(모든 동작 반복)...
+
+                                ### 3. 최종 교정 처방 (Coach's Prescription)
+                                * 가장 시급하게 고쳐야 할 1가지 습관
+                                * 추천 보강 운동
+                                """
+
                                 for m_name in models:
                                     try:
                                         model = genai.GenerativeModel(m_name)
-                                        response = model.generate_content([vf, """
-                                        당신은 세계적인 태권도 품새 국제 심판입니다.
-                                        이 영상을 2025 WT/KTA 경기 규칙에 의거하여 엄격하게 채점하고 분석하세요.
-                                        
-                                        [분석 항목]
-                                        1. 정확도 (4.0 만점 기준 예상 점수): 기본동작, 균형, 절도
-                                        2. 표현력 (6.0 만점 기준 예상 점수): 속도와 힘, 강유와 리듬, 기의 표현
-                                        3. 주요 감점 사항 (0.1 / 0.3 감점 요인 지적)
-                                        4. 총평 및 개선을 위한 원포인트 레슨
-                                        
-                                        출력 형식은 깔끔한 마크다운으로 작성해주세요.
-                                        """])
+                                        response = model.generate_content([vf, detailed_prompt])
                                         if response:
-                                            st.success(f"✅ 분석 성공 ({m_name} 모델 사용)")
+                                            st.success(f"✅ 분석 완료 (모델: {m_name})")
                                             break
                                     except Exception as e:
                                         last_err = str(e)
                                         continue 
                                 
                                 if response:
-                                    st.markdown("### 📝 AI 심판 분석 결과")
+                                    st.markdown("### 📝 정밀 분석 리포트")
                                     st.write(response.text)
                                 else:
-                                    st.error(f"모든 AI 모델 연결 실패. 오류: {last_err}")
+                                    st.error(f"분석 실패: {last_err}")
                                 
                                 tfile.close(); os.unlink(tfile.name)
-                            except Exception as e: st.error(f"치명적 오류: {e}")
+                            except Exception as e: st.error(f"오류: {e}")
 
             with tab3:
                 if st.button("기록 불러오기"):
