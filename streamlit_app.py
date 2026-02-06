@@ -7,7 +7,7 @@ import time
 import google.generativeai as genai
 import tempfile
 import os
-import importlib.metadata # 버전 확인용
+import importlib.metadata
 
 # ==========================================
 # [설정] 구글 시트 ID & API KEY
@@ -221,23 +221,39 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    # [버전 확인용 코드]
+    
+    # [라이브러리 버전 확인]
     try:
-        ai_version = importlib.metadata.version("google-generativeai")
-        st.caption(f"🔧 AI Tool Ver: {ai_version}")
-        if ai_version < "0.7.0":
-            st.error("⚠️ 버전이 낮습니다! (0.7.0 이상 필요)")
-    except:
-        st.error("⚠️ AI 도구가 설치되지 않았습니다.")
+        ver = importlib.metadata.version("google-generativeai")
+        st.caption(f"📚 Lib Ver: {ver}")
+    except: st.caption("Library not found")
 
     st.write("---")
     
-    # AI 연결
+    # [AI 자동 연결]
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
         except Exception as e:
-            st.error(f"키 오류: {e}")
+            st.error(f"키 설정 오류: {e}")
+
+    # [★ AI 진단 버튼]
+    with st.expander("🔑 AI 연결 테스트 (클릭)", expanded=True):
+        if st.button("내 키로 사용 가능한 모델 조회"):
+            try:
+                models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        models.append(m.name)
+                
+                if models:
+                    st.success("✅ 연결 성공! 사용 가능 모델:")
+                    st.code(models)
+                else:
+                    st.error("❌ 연결은 됐지만 사용 가능한 모델이 없습니다.")
+            except Exception as e:
+                st.error(f"❌ 연결 실패: {e}")
+                st.info("API 키가 정확한지, 구글 AI Studio에서 'Generative Language API'가 활성화되었는지 확인하세요.")
 
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -416,7 +432,8 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("저장 실패")
             
             with tab2:
-                st.subheader("📹 AI 분석 (자동 복구 모드)")
+                st.subheader("📹 AI 분석")
+                
                 with st.expander("📂 링크 저장"):
                     lnk = st.text_input("유튜브 URL")
                     note = st.text_input("메모")
@@ -430,43 +447,40 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("오류")
                 
                 st.write("---")
-                st.write("### 🤖 AI 영상 분석")
                 uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
                 if uf:
                     st.video(uf)
                     if st.button("🚀 AI 분석 시작"):
-                        with st.spinner("AI 심판이 분석 중입니다..."):
+                        with st.spinner("AI 분석 중..."):
                             try:
                                 tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                                 tfile.write(uf.read())
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # [★핵심] 모델 자동 선택 로직
+                                # [최신 모델 우선 시도]
                                 response = None
-                                models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
-                                last_err = ""
+                                error_log = ""
+                                model_list = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
                                 
-                                for m_name in models:
+                                for m in model_list:
                                     try:
-                                        model = genai.GenerativeModel(m_name)
-                                        response = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘. 정확도, 표현력, 감점 요인."])
+                                        model = genai.GenerativeModel(m)
+                                        response = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
                                         if response:
-                                            st.success(f"✅ 분석 성공 ({m_name} 모델 사용)")
+                                            st.success(f"분석 완료 ({m})")
                                             break
                                     except Exception as e:
-                                        last_err = str(e)
-                                        continue 
+                                        error_log += f"[{m} 실패: {str(e)}] "
+                                        continue
                                 
                                 if response:
-                                    st.markdown("### 📝 분석 결과")
                                     st.write(response.text)
                                 else:
-                                    st.error(f"모든 AI 모델 연결 실패. 오류: {last_err}")
-                                    st.info("💡 팁: requirements.txt 파일을 수정하고 앱을 재부팅하세요.")
+                                    st.error(f"분석 실패. 상세 원인: {error_log}")
                                 
                                 tfile.close(); os.unlink(tfile.name)
-                            except Exception as e: st.error(f"치명적 오류: {e}")
+                            except Exception as e: st.error(f"업로드 오류: {e}")
 
             with tab3:
                 if st.button("기록 불러오기"):
