@@ -9,16 +9,14 @@ import tempfile
 import os
 
 # ==========================================
-# [설정] 구글 시트 연동
+# [설정] 구글 시트 ID & 새 API KEY
 # ==========================================
 SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
-
-# [설정] Gemini API Key
-GEMINI_API_KEY = "AIzaSyAlGk_zCkGxrVzx51UoHwuWaSaD-M7QKY8"
+GEMINI_API_KEY = "AIzaSyDJCGd0w3NzpXfxoPYR-Ka8cNgtfxSjbIE"  # 새 키 적용됨
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
-# [디자인 스타일]
+# [스타일]
 st.markdown("""
     <style>
         :root { color-scheme: light; }
@@ -65,7 +63,7 @@ def load_fast_data():
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
         
-        # 장기일정 로직
+        # 장기일정
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             for i, row in df.iterrows():
@@ -150,10 +148,8 @@ def update_check_status(student_name, col_name, status_value):
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet("원생명단")
         cell = worksheet.find(student_name)
-        
         cols = ["출석확인", "등원확인", "하원확인"] if col_name == "출석확인" and status_value in ["결석", ""] else [col_name]
         headers = worksheet.row_values(1)
-        
         for c in cols:
             if c in headers:
                 worksheet.update_cell(cell.row, headers.index(c) + 1, status_value)
@@ -183,16 +179,12 @@ def archive_daily_attendance():
         sh = client.open_by_key(SHEET_ID)
         ws_daily = sh.worksheet("원생명단")
         ws_monthly = sh.worksheet("월간출석부")
-        
         daily_data = ws_daily.get_all_values()
         if len(daily_data) < 2: return False, "데이터 없음"
-        
         df = pd.DataFrame(daily_data[1:], columns=daily_data[0])
         today_str = get_korea_time().strftime("%m/%d")
-        
         names = [['이름']] + [[n] for n in df['이름'].tolist()]
         ws_monthly.update(range_name=f"A1:A{len(names)}", values=names)
-        
         log_col = [today_str]
         for _, row in df.iterrows():
             stat = row.get('출석확인', '')
@@ -202,7 +194,6 @@ def archive_daily_attendance():
             elif stat == '결석': mark = 'X'
             else: mark = ''
             log_col.append(mark)
-            
         header = ws_monthly.row_values(1)
         col_letter = gspread.utils.rowcol_to_a1(1, len(header)+1).replace('1', '')
         ws_monthly.update(range_name=f"{col_letter}1:{col_letter}{len(log_col)}", values=[[v] for v in log_col])
@@ -230,42 +221,26 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 5.5 (Flash Model)**")
+    st.markdown("**System Ver 6.0 (New Key)**")
     st.write("---")
     
+    # [AI 연결 설정]
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
         except Exception as e:
-            st.error(f"AI 키 오류: {e}")
-    
-    # [비상용] 사용 가능한 모델 확인 버튼
-    with st.expander("🔧 AI 모델 디버깅"):
-        if st.button("사용 가능한 모델 목록 확인"):
-            try:
-                models = [m.name for m in genai.list_models()]
-                st.write(models)
-            except Exception as e:
-                st.error(f"확인 불가: {e}")
+            st.error(f"키 오류: {e}")
 
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
         time.sleep(10)
         st.rerun()
 
-    menu_list = [
-        "🏠 홈 대시보드", 
-        "🚍 차량 운행표", 
-        "📝 수련부 출석", 
-        "🏆 정권연합선수반", 
-        "📞 학부모 상담", 
-        "📉 오늘의 결석자", 
-        "🧠 기질/훈육 통합", 
-        "📈 승급심사 관리", 
-        "🎂 이달의 생일", 
-        "🔐 관리자 모드"
-    ]
-    menu = st.radio("메뉴 선택", menu_list)
+    menu = st.radio("메뉴 선택", [
+        "🏠 홈 대시보드", "🚍 차량 운행표", "📝 수련부 출석", 
+        "🏆 정권연합선수반", "📞 학부모 상담", "📉 오늘의 결석자", 
+        "🧠 기질/훈육 통합", "📈 승급심사 관리", "🎂 이달의 생일", "🔐 관리자 모드"
+    ])
     
     st.divider()
     if st.button("🔄 데이터 새로고침"):
@@ -282,7 +257,6 @@ if menu == "🏠 홈 대시보드":
     weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
     st.markdown(f"<div style='text-align: right; font-size: 1.5em; font-weight: bold; margin-bottom: 20px;'>📅 {now.strftime('%m월 %d일')} {weekdays[now.weekday()]}</div>", unsafe_allow_html=True)
     st.header("📢 오늘의 작전 브리핑")
-    
     if not df_notice.empty:
         for i, row in df_notice.tail(10).iloc[::-1].iterrows():
             content = str(row.get('내용','')).strip()
@@ -293,7 +267,6 @@ if menu == "🏠 홈 대시보드":
             elif "심사" in content: bg, border, icon = "#fff9c4", "#fbc02d", "🏆"
             st.markdown(f"<div style='background:{bg}; border-left:5px solid {border}; padding:15px; margin-bottom:10px; border-radius:8px;'><b>{icon} 공지</b><br>{content}</div>", unsafe_allow_html=True)
     else: st.info("공지 없음")
-
     if not df_schedule.empty:
         today_test = df_schedule[pd.to_datetime(df_schedule.iloc[:,0].astype(str).str.replace('.','-'), errors='coerce').dt.date == now.date()]
         if not today_test.empty:
@@ -305,42 +278,32 @@ elif menu == "🚍 차량 운행표":
     st.header("🚍 통합 차량 운행표")
     now = get_korea_time()
     today_char = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
-    
     if not df_students.empty:
         w_df = df_students.copy()
         if '등원요일' in w_df.columns:
             w_df = w_df[w_df['등원요일'].astype(str).str.strip().eq('') | w_df['등원요일'].astype(str).str.contains(today_char)]
-        
         for col in ['등원차량', '등원시간', '등원장소', '하원차량', '하원시간', '하원장소']:
             if col in w_df.columns: w_df[col] = w_df[col].apply(lambda x: parse_schedule_for_today(x, today_char))
-            
         all_cars = sorted(list(set([x for x in w_df['등원차량'].unique().tolist() + w_df['하원차량'].unique().tolist() if x and str(x).strip()])))
-        
         if all_cars:
             sel_car = st.selectbox("차량 선택", all_cars)
             sch_list = []
             for mode, v, t, l, c in [('등원','등원차량','등원시간','등원장소','등원확인'), ('하원','하원차량','하원시간','하원장소','하원확인')]:
                 for _, r in w_df[w_df[v] == sel_car].iterrows():
                     sch_list.append({'name':r['이름'], 'type':mode, 'time':r.get(t,''), 'loc':r.get(l,''), 'status':r.get(c,''), 'col':c})
-            
             sch_list.sort(key=lambda x: x['time'] if x['time'] else "99:99")
-            
             for idx, item in enumerate(sch_list):
                 bg = "#e3f2fd" if item['type']=='등원' else "#fff9c4"
                 if item['status']=='결석': bg = "#ffebee"
                 stat_mk = "✅" if item['status']=='탑승' else ("❌" if item['status']=='결석' else "")
-                
                 st.markdown(f"<div style='background:{bg}; padding:10px; margin-bottom:5px; border-radius:5px;'><b>{item['time']} {item['name']} ({item['type']})</b> {stat_mk}<br>{item['loc']}</div>", unsafe_allow_html=True)
-                
                 c1, c2 = st.columns(2)
                 k = f"{idx}_{item['name']}_{item['type']}"
                 if c1.button("탑승/취소", key=f"btn1_{k}"): 
-                    new_val = "" if item['status']=="탑승" else "탑승"
-                    update_check_status(item['name'], item['col'], new_val)
+                    update_check_status(item['name'], item['col'], "" if item['status']=="탑승" else "탑승")
                     st.rerun()
                 if c2.button("결석/복구", key=f"btn2_{k}"):
-                    new_val = "" if item['status']=="결석" else "결석"
-                    update_check_status(item['name'], item['col'], new_val)
+                    update_check_status(item['name'], item['col'], "" if item['status']=="결석" else "결석")
                     st.rerun()
         else: st.info("배차 정보 없음")
 
@@ -349,25 +312,20 @@ elif menu == "📝 수련부 출석":
     st.header("📝 수련부 출석부")
     now = get_korea_time()
     today_char = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
-    
     if not df_students.empty and '수련부' in df_students.columns:
         c1, c2 = st.columns([2, 1])
         query = c1.text_input("이름 검색")
         cls_list = sorted([str(x) for x in df_students['수련부'].unique() if str(x).strip()])
         sel_cls = c2.selectbox("수련부 선택", cls_list) if not query else None
-        
         target = df_students
         if query: target = target[target['이름'].str.contains(query)]
         elif sel_cls: target = target[target['수련부'].astype(str) == sel_cls]
-        
         if not target.empty:
             for i, row in target.sort_values('이름').iterrows():
                 stat = row.get('출석확인', '')
                 note = row.get('비고', '')
                 bg = "#e8f5e9" if stat=='출석' else ("#ffebee" if stat=='결석' else "#ffffff")
-                
                 st.markdown(f"<div style='background:{bg}; padding:10px; border:1px solid #ddd; border-radius:5px; margin-top:5px;'><b>{row['이름']}</b> ({stat})<br><small>{note}</small></div>", unsafe_allow_html=True)
-                
                 b1, b2, b3 = st.columns([1,1,2])
                 k = f"att_{i}_{row['이름']}"
                 if b1.button("출석", key=f"ok_{k}"): 
@@ -376,9 +334,8 @@ elif menu == "📝 수련부 출석":
                 if b2.button("결석", key=f"no_{k}"):
                     update_check_status(row['이름'], "출석확인", "결석" if stat!="결석" else "")
                     st.rerun()
-                
-                with st.expander("특이사항/사유"):
-                    new_note = st.text_input("사유 입력", value=note, key=f"note_{k}")
+                with st.expander("특이사항"):
+                    new_note = st.text_input("사유", value=note, key=f"note_{k}")
                     if st.button("저장", key=f"s_{k}"):
                         update_check_status(row['이름'], "비고", new_note)
                         st.rerun()
@@ -389,102 +346,74 @@ elif menu == "📝 수련부 출석":
 # =========================================================
 elif menu == "🏆 정권연합선수반":
     st.header("🏆 정권연합 2026 시즌 선수단 관제")
-    
     sub_menu = st.radio("", ["👥 선수 등록/관리", "🏋️ 훈련/AI 분석"], horizontal=True)
     st.divider()
 
-    # 4-1. 선수 직접 등록 및 관리
     if sub_menu == "👥 선수 등록/관리":
         st.subheader("👥 정권연합 선수 등록")
-        
         with st.form("add_player_form"):
-            new_name = st.text_input("선수 이름 (예: 홍길동)")
-            new_team = st.text_input("소속 (예: 정권연합/로운/00도장)", value="정권연합")
-            new_note = st.text_input("비고/특이사항")
-            
+            new_name = st.text_input("선수 이름")
+            new_team = st.text_input("소속", value="정권연합")
+            new_note = st.text_input("비고")
             if st.form_submit_button("➕ 선수 명단에 추가"):
                 if new_name:
                     if register_new_alliance_player(new_name, new_team, new_note):
-                        st.success(f"{new_name} 선수가 등록되었습니다.")
+                        st.success(f"{new_name} 등록 완료")
                         st.cache_data.clear()
                         time.sleep(1)
                         st.rerun()
-                    else:
-                        st.error("등록 실패")
-                else:
-                    st.warning("이름을 입력하세요.")
-
+                    else: st.error("등록 실패")
+                else: st.warning("이름을 입력하세요.")
         st.markdown("---")
-        st.write("📋 **등록된 선수 목록 (가나다순)**")
+        st.write("📋 **등록된 선수 목록**")
         athlete_list = get_alliance_athletes()
-        if athlete_list:
-            st.write(", ".join(athlete_list))
-        else:
-            st.warning("등록된 선수가 없습니다. 위에서 선수를 추가해주세요.")
+        if athlete_list: st.write(", ".join(athlete_list))
+        else: st.warning("등록된 선수가 없습니다.")
 
-    # 4-2. 훈련 및 AI 분석
     elif sub_menu == "🏋️ 훈련/AI 분석":
-        
         athlete_list = get_alliance_athletes()
-        
         if not athlete_list:
-            st.error("⚠️ 등록된 선수가 없습니다. '👥 선수 등록/관리' 탭에서 선수를 먼저 등록해주세요.")
+            st.error("⚠️ 등록된 선수가 없습니다. 먼저 등록해주세요.")
         else:
-            t_name = st.selectbox("훈련 대상 선수 선택", athlete_list)
-
+            t_name = st.selectbox("선수 선택", athlete_list)
             tab1, tab2, tab3 = st.tabs(["📝 채점/기록", "📹 AI 영상분석", "📊 기록 조회"])
 
-            # [Tab 1] 기록
             with tab1:
                 st.subheader(f"📝 {t_name} 훈련 기록")
                 with st.form("log"):
                     item = st.selectbox("종목", ["고려", "금강", "태백", "평원", "기초체력", "인터벌"])
                     phase = st.selectbox("주기", ["준비기", "특수준비기", "경기기", "회복기"])
                     st.write("---")
-                    
-                    st.markdown("##### 1. 정확도 (4.0)")
                     c_a, c_b = st.columns(2)
-                    d01 = c_a.number_input("📉 0.1 감점 횟수", 0, 50, 0)
-                    d03 = c_b.number_input("📉 0.3 감점 횟수", 0, 20, 0)
+                    d01 = c_a.number_input("📉 0.1 감점", 0, 50, 0)
+                    d03 = c_b.number_input("📉 0.3 감점", 0, 20, 0)
                     acc = max(0.0, 4.0 - d01*0.1 - d03*0.3)
                     st.metric("정확도 점수", f"{acc:.1f}")
-                    
                     st.markdown("---")
-                    st.markdown("##### 2. 표현력 (6.0)")
+                    st.markdown("##### 표현력 (6.0)")
                     c_p1, c_p2, c_p3 = st.columns(3)
-                    with c_p1: pres1 = st.slider("① 속도와 힘 (2.0)", 0.0, 2.0, 1.0, 0.1)
-                    with c_p2: pres2 = st.slider("② 강유/완급/리듬 (2.0)", 0.0, 2.0, 1.0, 0.1)
-                    with c_p3: pres3 = st.slider("③ 기의 표현 (2.0)", 0.0, 2.0, 1.0, 0.1)
+                    with c_p1: pres1 = st.slider("① 속도/힘", 0.0, 2.0, 1.0, 0.1)
+                    with c_p2: pres2 = st.slider("② 리듬/강유", 0.0, 2.0, 1.0, 0.1)
+                    with c_p3: pres3 = st.slider("③ 기의 표현", 0.0, 2.0, 1.0, 0.1)
                     pres_total = pres1 + pres2 + pres3
                     st.metric("표현력 총점", f"{pres_total:.1f}")
-                    
-                    st.markdown("---")
                     st.markdown(f"#### 🏁 총점: **{(acc + pres_total):.2f}**")
-                    cmt = st.text_area("코칭 피드백")
-                    
-                    if st.form_submit_button("기록 저장"):
+                    cmt = st.text_area("피드백")
+                    if st.form_submit_button("저장"):
                         try:
                             client = get_gspread_client()
                             ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
-                            ws.append_row([
-                                datetime.now().strftime("%Y-%m-%d"), t_name, "정권연합", item, 
-                                acc, pres_total, d01, d03, acc + pres_total, phase, 5, cmt, ""
-                            ])
+                            ws.append_row([datetime.now().strftime("%Y-%m-%d"), t_name, "정권연합", item, acc, pres_total, d01, d03, acc+pres_total, phase, 5, cmt, ""])
                             st.success("저장 완료")
-                        except: st.error("저장 실패 (시트 확인)")
+                        except: st.error("저장 실패")
             
-            # [Tab 2] AI 분석 (모델명: gemini-1.5-flash)
+            # [Tab 2] AI 분석 (★자동 복구 기능 탑재)
             with tab2:
                 st.subheader("📹 AI 분석 및 아카이브")
-                
-                with st.expander("📂 영상 링크 (유튜브/드라이브)"):
-                    lnk = st.text_input("유튜브 링크 입력 (즉시 재생 가능)")
-                    note = st.text_input("영상 메모")
-                    
-                    if lnk:
-                        st.video(lnk)
-                        st.info("ℹ️ 유튜브 링크는 저장 및 시청만 가능하며, AI 분석을 하려면 아래에 파일을 직접 업로드해야 합니다.")
-
+                with st.expander("📂 링크 저장"):
+                    lnk = st.text_input("유튜브 URL")
+                    note = st.text_input("메모")
+                    if lnk: st.video(lnk)
                     if st.button("링크 저장"):
                         try:
                             client = get_gspread_client()
@@ -494,28 +423,43 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("오류")
                 
                 st.write("---")
-                st.write("### 🤖 파일 업로드 분석 (AI 실행)")
-                uf = st.file_uploader("영상 파일 업로드 (MP4/MOV)", type=["mp4", "mov"])
-                
+                st.write("### 🤖 AI 영상 분석")
+                uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
                 if uf:
                     st.video(uf)
                     if st.button("🚀 AI 분석 시작"):
-                        with st.spinner("GEMS AI가 영상을 분석 중입니다... (약 30초 소요)"):
+                        with st.spinner("AI 심판이 분석 중입니다..."):
                             try:
                                 tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                                 tfile.write(uf.read())
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # [수정됨] 가장 안정적인 모델명 사용
-                                model = genai.GenerativeModel('gemini-1.5-flash')
-                                res = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
-                                st.markdown("### 📝 분석 결과")
-                                st.write(res.text)
+                                # [★핵심] 모델 자동 선택 로직
+                                response = None
+                                models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+                                last_err = ""
+                                
+                                for m_name in models:
+                                    try:
+                                        model = genai.GenerativeModel(m_name)
+                                        response = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
+                                        if response:
+                                            st.success(f"✅ 분석 성공 ({m_name} 모델 사용)")
+                                            break
+                                    except Exception as e:
+                                        last_err = str(e)
+                                        continue 
+                                
+                                if response:
+                                    st.markdown("### 📝 분석 결과")
+                                    st.write(response.text)
+                                else:
+                                    st.error(f"모든 AI 모델 연결 실패. 오류: {last_err}")
+                                
                                 tfile.close(); os.unlink(tfile.name)
-                            except Exception as e: st.error(f"오류: {e}")
+                            except Exception as e: st.error(f"치명적 오류: {e}")
 
-            # [Tab 3] 조회
             with tab3:
                 if st.button("기록 불러오기"):
                     c = get_gspread_client()
@@ -535,7 +479,6 @@ elif menu == "📞 학부모 상담":
             ct = st.text_area("상담 내용")
             if st.form_submit_button("저장"):
                 if add_consultation_log(q, ct): st.success("저장됨")
-        
         st.write("---")
         logs = load_consultation_logs(q)
         if not logs.empty:
