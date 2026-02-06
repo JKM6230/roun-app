@@ -9,12 +9,11 @@ import tempfile
 import os
 
 # ==========================================
-# [설정] 구글 시트 연동 (로운태권도)
+# [설정] 구글 시트 연동
 # ==========================================
 SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
 
-# [설정] Gemini API Key (직접 입력됨)
-# 주의: 이 코드가 공개된 곳에 올라가지 않도록 관리하십시오.
+# [설정] Gemini API Key
 GEMINI_API_KEY = "AIzaSyAlGk_zCkGxrVzx51UoHwuWaSaD-M7QKY8"
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
@@ -37,7 +36,6 @@ def get_korea_time():
 @st.cache_resource
 def get_gspread_client():
     try:
-        # secrets.toml 파일에서 키 정보를 가져옵니다
         credentials = Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
             scopes=["https://www.googleapis.com/auth/spreadsheets"],
@@ -49,7 +47,7 @@ def get_gspread_client():
         return None
 
 # ==========================================
-# [데이터 로드 함수들]
+# [데이터 로드 함수]
 # ==========================================
 @st.cache_data(ttl=5) 
 def load_fast_data():
@@ -67,7 +65,7 @@ def load_fast_data():
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
         
-        # 장기일정 로직
+        # 장기일정 로직 (기존 유지)
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             for i, row in df.iterrows():
@@ -101,6 +99,37 @@ def load_slow_data(sheet_name):
         if len(rows) < 2: return pd.DataFrame() 
         return pd.DataFrame(rows[1:], columns=rows[0])
     except: return pd.DataFrame()
+
+# [신규] 정권연합 선수 리스트 불러오기 (선수단기록 시트 기반)
+def get_alliance_athletes():
+    client = get_gspread_client()
+    if not client: return []
+    try:
+        sh = client.open_by_key(SHEET_ID)
+        # 선수단기록 시트에서 유니크한 이름만 추출
+        ws = sh.worksheet("선수단기록")
+        # 2번째 컬럼(이름)만 가져옴
+        names_col = ws.col_values(2)
+        if len(names_col) < 2: return []
+        # 중복 제거 및 헤더('이름') 제외, 빈값 제외
+        unique_names = sorted(list(set([n for n in names_col[1:] if n.strip()])))
+        return unique_names
+    except:
+        return []
+
+# [신규] 정권연합 선수 등록 함수
+def register_new_alliance_player(name, team, note):
+    client = get_gspread_client()
+    if not client: return False
+    try:
+        sh = client.open_by_key(SHEET_ID)
+        ws = sh.worksheet("선수단기록")
+        today = get_korea_time().strftime("%Y-%m-%d")
+        # 등록 이력을 남김 (이름이 기록되면 리스트에 뜸)
+        # [날짜, 이름, 소속, 종목, 정확도, 표현력, 감점0.1, 감점0.3, 총점, 주기, RPE, 코멘트, 링크]
+        ws.append_row([today, name, team, "선수등록", 0, 0, 0, 0, 0, "등록", 0, note, ""])
+        return True
+    except: return False
 
 def load_consultation_logs(student_name):
     client = get_gspread_client()
@@ -169,11 +198,9 @@ def archive_daily_attendance():
         df = pd.DataFrame(daily_data[1:], columns=daily_data[0])
         today_str = get_korea_time().strftime("%m/%d")
         
-        # 이름 업데이트
         names = [['이름']] + [[n] for n in df['이름'].tolist()]
         ws_monthly.update(range_name=f"A1:A{len(names)}", values=names)
         
-        # 출석 마킹
         log_col = [today_str]
         for _, row in df.iterrows():
             stat = row.get('출석확인', '')
@@ -184,11 +211,9 @@ def archive_daily_attendance():
             else: mark = ''
             log_col.append(mark)
             
-        # 컬럼 추가
         header = ws_monthly.row_values(1)
         col_letter = gspread.utils.rowcol_to_a1(1, len(header)+1).replace('1', '')
         ws_monthly.update(range_name=f"{col_letter}1:{col_letter}{len(log_col)}", values=[[v] for v in log_col])
-        
         return True, "마감 완료"
     except Exception as e: return False, str(e)
 
@@ -199,22 +224,6 @@ def parse_schedule_for_today(raw, day_char):
             p = s.split('(')
             if day_char in p[1]: return p[0].strip()
     return ""
-
-def register_athlete(student_name, team_type):
-    client = get_gspread_client()
-    if not client: return False
-    try:
-        sh = client.open_by_key(SHEET_ID)
-        worksheet = sh.worksheet("원생명단")
-        cell = worksheet.find(student_name)
-        if cell:
-            headers = worksheet.row_values(1)
-            if "수련부" in headers:
-                worksheet.update_cell(cell.row, headers.index("수련부")+1, team_type)
-                load_fast_data.clear()
-                return True
-    except: return False
-    return False
 
 # ==========================================
 # [데이터 로드 실행]
@@ -229,14 +238,12 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 5.1 (API Embedded)**")
+    st.markdown("**System Ver 5.2 (Alliance Mode)**")
     st.write("---")
     
-    # [수정됨] AI 설정: 키가 코드에 있으므로 바로 연결 시도
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
-            # st.success("AI 시스템 가동 중") # 공간 절약을 위해 메시지 생략 가능
         except Exception as e:
             st.error(f"AI 키 오류: {e}")
 
@@ -376,33 +383,47 @@ elif menu == "📝 수련부 출석":
                         st.rerun()
         else: st.info("명단 없음")
 
-# 4. 정권연합 선수반 (통합 기능)
+# =========================================================
+# [4. 정권연합 선수반 - (명단 분리 & 선수 직접 추가 기능 탑재)]
+# =========================================================
 elif menu == "🏆 정권연합선수반":
     st.header("🏆 정권연합 2026 시즌 선수단 관제")
     
-    sub_menu = st.radio("", ["👥 선수반 명단 관리", "🏋️ 훈련/AI 분석"], horizontal=True)
+    sub_menu = st.radio("", ["👥 선수 등록/관리", "🏋️ 훈련/AI 분석"], horizontal=True)
     st.divider()
 
-    # 4-1. 명단 관리
-    if sub_menu == "👥 선수반 명단 관리":
-        st.subheader("👥 인원 관리")
-        c1, c2 = st.columns([2,1])
-        reg_name = c1.selectbox("원생 선택", df_students['이름'].tolist())
-        team_type = c2.selectbox("변경할 소속", ["선수부", "시범단", "입시반", "일반부"])
+    # 4-1. 선수 직접 등록 및 관리 (명단 분리됨)
+    if sub_menu == "👥 선수 등록/관리":
+        st.subheader("👥 정권연합 선수 등록")
+        st.info("이곳에 등록된 선수만 '훈련' 메뉴에 나타납니다.")
         
-        if st.button("✅ 소속 변경"):
-            if register_athlete(reg_name, team_type):
-                st.success("변경 완료")
-                time.sleep(1); st.rerun()
-            else: st.error("실패")
+        with st.form("add_player_form"):
+            new_name = st.text_input("선수 이름 (예: 홍길동)")
+            new_team = st.text_input("소속 (예: 정권연합/로운/00도장)", value="정권연합")
+            new_note = st.text_input("비고/특이사항")
             
-        st.write("---")
-        st.write("📋 **현재 선수반 명단**")
-        if not df_students.empty:
-            ath = df_students[df_students['수련부'].astype(str).str.contains('선수|시범|입시', case=False)]
-            st.dataframe(ath[['이름', '수련부', '학년']], hide_index=True)
+            if st.form_submit_button("➕ 선수 명단에 추가"):
+                if new_name:
+                    if register_new_alliance_player(new_name, new_team, new_note):
+                        st.success(f"{new_name} 선수가 등록되었습니다.")
+                        st.cache_data.clear()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("등록 실패")
+                else:
+                    st.warning("이름을 입력하세요.")
 
-    # 4-2. 훈련 및 AI 분석
+        st.markdown("---")
+        st.write("📋 **등록된 선수 목록 (가나다순)**")
+        # 저장된 선수 리스트 불러오기
+        athlete_list = get_alliance_athletes()
+        if athlete_list:
+            st.write(", ".join(athlete_list))
+        else:
+            st.warning("등록된 선수가 없습니다. 위에서 선수를 추가해주세요.")
+
+    # 4-2. 훈련 및 AI 분석 (선수단기록 명단만 사용)
     elif sub_menu == "🏋️ 훈련/AI 분석":
         training_db = {
             "비시즌": ["🧘‍♂️ 회복/가동성", "- 폼롤러 스트레칭", "- 가벼운 조깅"],
@@ -411,89 +432,117 @@ elif menu == "🏆 정권연합선수반":
         }
         nlp_db = {"지면반력": "발바닥으로 지면을 강하게 미세요.", "시선": "목표를 끝까지 응시하세요."}
 
-        c1, c2 = st.columns(2)
-        base_list = df_students[df_students['수련부'].astype(str).str.contains('선수|시범|입시', case=False)]['이름'].tolist()
+        # 선수 선택 (저장된 리스트에서만 불러옴)
+        athlete_list = get_alliance_athletes()
         
-        input_type = st.radio("선수 선택", ["명단 선택", "직접 입력(연합)"], horizontal=True)
-        if input_type == "명단 선택":
-            t_name = st.selectbox("이름", base_list if base_list else ["없음"])
-            t_team = "로운태권도"
+        if not athlete_list:
+            st.error("⚠️ 등록된 선수가 없습니다. '👥 선수 등록/관리' 탭에서 선수를 먼저 등록해주세요.")
         else:
-            t_name = st.text_input("이름 입력")
-            t_team = st.text_input("소속 입력", value="정권연합")
+            t_name = st.selectbox("훈련 대상 선수 선택", athlete_list)
+            # 해당 선수의 소속 정보 등은 편의상 생략하거나 별도 조회 가능
 
-        tab1, tab2, tab3 = st.tabs(["📝 기록/채점", "📹 AI 영상분석", "📊 기록 조회"])
+            tab1, tab2, tab3 = st.tabs(["📝 채점/기록", "📹 AI 영상분석", "📊 기록 조회"])
 
-        # [Tab 1] 기록
-        with tab1:
-            st.subheader(f"📝 {t_name} 훈련 기록")
-            with st.form("log"):
-                item = st.selectbox("종목", ["고려", "금강", "태백", "기초체력"])
-                phase = st.selectbox("주기", ["준비기", "경기기", "회복기"])
-                st.write("---")
-                c_a, c_b = st.columns(2)
-                d01 = c_a.number_input("0.1 감점", 0, 50, 0)
-                d03 = c_a.number_input("0.3 감점", 0, 20, 0)
-                acc = max(0.0, 4.0 - d01*0.1 - d03*0.3)
-                c_a.metric("정확도", f"{acc:.1f}")
-                
-                pres = c_b.slider("표현력", 0.0, 6.0, 3.0, 0.1)
-                c_b.metric("표현력", f"{pres:.1f}")
-                
-                cmt = st.text_area("피드백")
-                if st.form_submit_button("저장"):
-                    if t_name:
+            # [Tab 1] 기록 (숙련성 세분화)
+            with tab1:
+                st.subheader(f"📝 {t_name} 훈련 기록")
+                with st.form("log"):
+                    item = st.selectbox("종목", ["고려", "금강", "태백", "평원", "기초체력", "인터벌"])
+                    phase = st.selectbox("주기", ["준비기", "특수준비기", "경기기", "회복기"])
+                    st.write("---")
+                    
+                    # 1. 정확도 (4.0)
+                    st.markdown("##### 1. 정확도 (4.0)")
+                    c_a, c_b = st.columns(2)
+                    d01 = c_a.number_input("📉 0.1 감점 횟수", 0, 50, 0)
+                    d03 = c_b.number_input("📉 0.3 감점 횟수", 0, 20, 0)
+                    acc = max(0.0, 4.0 - d01*0.1 - d03*0.3)
+                    st.metric("정확도 점수", f"{acc:.1f}")
+                    
+                    st.markdown("---")
+                    # 2. 표현력 세분화 (2.0 x 3 = 6.0)
+                    st.markdown("##### 2. 표현력 (6.0)")
+                    c_p1, c_p2, c_p3 = st.columns(3)
+                    
+                    with c_p1:
+                        pres1 = st.slider("① 속도와 힘 (2.0)", 0.0, 2.0, 1.0, 0.1)
+                    with c_p2:
+                        pres2 = st.slider("② 강유/완급/리듬 (2.0)", 0.0, 2.0, 1.0, 0.1)
+                    with c_p3:
+                        pres3 = st.slider("③ 기의 표현 (2.0)", 0.0, 2.0, 1.0, 0.1)
+                        
+                    pres_total = pres1 + pres2 + pres3
+                    st.metric("표현력 총점", f"{pres_total:.1f}")
+                    
+                    st.markdown("---")
+                    st.markdown(f"#### 🏁 총점: **{(acc + pres_total):.2f}**")
+
+                    cmt = st.text_area("코칭 피드백")
+                    
+                    if st.form_submit_button("기록 저장"):
                         try:
                             client = get_gspread_client()
                             ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
-                            ws.append_row([datetime.now().strftime("%Y-%m-%d"), t_name, t_team, item, acc, pres, d01, d03, acc+pres, phase, 5, cmt, ""])
+                            ws.append_row([
+                                datetime.now().strftime("%Y-%m-%d"), 
+                                t_name, 
+                                "정권연합", # 기본 소속
+                                item, 
+                                acc, 
+                                pres_total, 
+                                d01, d03, 
+                                acc + pres_total, 
+                                phase, 
+                                5, 
+                                cmt, 
+                                ""
+                            ])
                             st.success("저장 완료")
                         except: st.error("저장 실패 (시트 확인)")
-        
-        # [Tab 2] AI 분석
-        with tab2:
-            st.subheader("📹 AI 분석")
-            with st.expander("영상 링크 저장"):
-                lnk = st.text_input("URL")
-                note = st.text_input("메모")
-                if st.button("링크 저장"):
-                    try:
-                        client = get_gspread_client()
-                        ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
-                        ws.append_row([datetime.now().strftime("%Y-%m-%d"), t_name, t_team, "링크", 0,0,0,0,0, "아카이브", 0, note, lnk])
-                        st.success("저장됨")
-                    except: st.error("오류")
             
-            st.write("---")
-            # [API Key 자동 적용됨]
-            uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
-            if uf and GEMINI_API_KEY:
-                st.video(uf)
-                if st.button("🚀 AI 분석 시작"):
-                    with st.spinner("분석 중..."):
+            # [Tab 2] AI 분석
+            with tab2:
+                st.subheader("📹 AI 분석")
+                with st.expander("영상 링크 저장"):
+                    lnk = st.text_input("URL")
+                    note = st.text_input("메모")
+                    if st.button("링크 저장"):
                         try:
-                            tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                            tfile.write(uf.read())
-                            vf = genai.upload_file(tfile.name)
-                            while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
-                            
-                            model = genai.GenerativeModel('gemini-1.5-pro-latest')
-                            res = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
-                            st.write(res.text)
-                            tfile.close(); os.unlink(tfile.name)
-                        except Exception as e: st.error(f"오류: {e}")
-            elif uf and not GEMINI_API_KEY: st.warning("키가 설정되지 않았습니다.")
+                            client = get_gspread_client()
+                            ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
+                            ws.append_row([datetime.now().strftime("%Y-%m-%d"), t_name, "정권연합", "링크", 0,0,0,0,0, "아카이브", 0, note, lnk])
+                            st.success("저장됨")
+                        except: st.error("오류")
+                
+                st.write("---")
+                uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
+                if uf and GEMINI_API_KEY:
+                    st.video(uf)
+                    if st.button("🚀 AI 분석 시작"):
+                        with st.spinner("분석 중..."):
+                            try:
+                                tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                                tfile.write(uf.read())
+                                vf = genai.upload_file(tfile.name)
+                                while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
+                                
+                                model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                                res = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
+                                st.write(res.text)
+                                tfile.close(); os.unlink(tfile.name)
+                            except Exception as e: st.error(f"오류: {e}")
+                elif uf and not GEMINI_API_KEY: st.warning("키 없음")
 
-        # [Tab 3] 조회
-        with tab3:
-            if st.button("기록 불러오기"):
-                c = get_gspread_client()
-                try:
-                    ws = c.open_by_key(SHEET_ID).worksheet("선수단기록")
-                    d = ws.get_all_values()
-                    df = pd.DataFrame(d[1:], columns=d[0])
-                    st.dataframe(df[df['이름']==t_name])
-                except: st.warning("데이터 없음")
+            # [Tab 3] 조회
+            with tab3:
+                if st.button("기록 불러오기"):
+                    c = get_gspread_client()
+                    try:
+                        ws = c.open_by_key(SHEET_ID).worksheet("선수단기록")
+                        d = ws.get_all_values()
+                        df = pd.DataFrame(d[1:], columns=d[0])
+                        st.dataframe(df[df['이름']==t_name])
+                    except: st.warning("데이터 없음")
 
 # 5. 상담
 elif menu == "📞 학부모 상담":
