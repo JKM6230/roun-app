@@ -221,8 +221,8 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
+    st.markdown("**System Ver 7.0 (Gemini 3.0 Pro)**")
     
-    # [라이브러리 버전 확인]
     try:
         ver = importlib.metadata.version("google-generativeai")
         st.caption(f"🔧 Lib Ver: {ver}")
@@ -230,14 +230,13 @@ with st.sidebar:
 
     st.write("---")
     
-    # [AI 자동 연결]
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
         except Exception as e:
             st.error(f"키 설정 오류: {e}")
 
-    # [모델 진단 버튼 유지]
+    # [모델 진단 버튼]
     with st.expander("🔑 AI 연결 테스트"):
         if st.button("내 키로 사용 가능한 모델 조회"):
             try:
@@ -427,8 +426,7 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("저장 실패")
             
             with tab2:
-                st.subheader("📹 AI 분석")
-                
+                st.subheader("📹 AI 분석 (Gemini 3.0 Pro)")
                 with st.expander("📂 링크 저장"):
                     lnk = st.text_input("유튜브 URL")
                     note = st.text_input("메모")
@@ -442,7 +440,7 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("오류")
                 
                 st.write("---")
-                st.write("### 🤖 AI 영상 분석 (Gemini 2.5 Pro)")
+                st.write("### 🤖 AI 영상 분석")
                 uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
                 if uf:
                     st.video(uf)
@@ -454,17 +452,15 @@ elif menu == "🏆 정권연합선수반":
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # [★수정됨] 사용자 사용 가능 모델 리스트 반영
-                                # 가장 성능 좋은 2.5-pro를 우선 사용하고, 안되면 flash로
+                                # [★수정됨] 3.0 Pro (Preview) 최우선 적용
                                 response = None
-                                # 우선순위: 2.5-pro (최고성능) -> 2.5-flash (빠름) -> 2.0-flash (안정적)
-                                models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+                                # 요청하신 대로 3.0 Pro Preview를 가장 먼저 시도합니다.
+                                models = ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
                                 last_err = ""
                                 
                                 for m_name in models:
                                     try:
                                         model = genai.GenerativeModel(m_name)
-                                        # 프롬프트: 전문적인 태권도 분석
                                         response = model.generate_content([vf, """
                                         당신은 세계적인 태권도 품새 국제 심판입니다.
                                         이 영상을 2025 WT/KTA 경기 규칙에 의거하여 엄격하게 채점하고 분석하세요.
