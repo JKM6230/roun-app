@@ -225,7 +225,7 @@ with st.sidebar:
     # [라이브러리 버전 확인]
     try:
         ver = importlib.metadata.version("google-generativeai")
-        st.caption(f"📚 Lib Ver: {ver}")
+        st.caption(f"🔧 Lib Ver: {ver}")
     except: st.caption("Library not found")
 
     st.write("---")
@@ -237,23 +237,18 @@ with st.sidebar:
         except Exception as e:
             st.error(f"키 설정 오류: {e}")
 
-    # [★ AI 진단 버튼]
-    with st.expander("🔑 AI 연결 테스트 (클릭)", expanded=True):
+    # [모델 진단 버튼 유지]
+    with st.expander("🔑 AI 연결 테스트"):
         if st.button("내 키로 사용 가능한 모델 조회"):
             try:
                 models = []
                 for m in genai.list_models():
                     if 'generateContent' in m.supported_generation_methods:
                         models.append(m.name)
-                
-                if models:
-                    st.success("✅ 연결 성공! 사용 가능 모델:")
-                    st.code(models)
-                else:
-                    st.error("❌ 연결은 됐지만 사용 가능한 모델이 없습니다.")
+                st.success("✅ 연결 성공!")
+                st.code(models)
             except Exception as e:
                 st.error(f"❌ 연결 실패: {e}")
-                st.info("API 키가 정확한지, 구글 AI Studio에서 'Generative Language API'가 활성화되었는지 확인하세요.")
 
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -447,40 +442,56 @@ elif menu == "🏆 정권연합선수반":
                         except: st.error("오류")
                 
                 st.write("---")
+                st.write("### 🤖 AI 영상 분석 (Gemini 2.5 Pro)")
                 uf = st.file_uploader("영상 업로드", type=["mp4", "mov"])
                 if uf:
                     st.video(uf)
                     if st.button("🚀 AI 분석 시작"):
-                        with st.spinner("AI 분석 중..."):
+                        with st.spinner("AI 심판이 분석 중입니다..."):
                             try:
                                 tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                                 tfile.write(uf.read())
                                 vf = genai.upload_file(tfile.name)
                                 while vf.state.name == "PROCESSING": time.sleep(2); vf = genai.get_file(vf.name)
                                 
-                                # [최신 모델 우선 시도]
+                                # [★수정됨] 사용자 사용 가능 모델 리스트 반영
+                                # 가장 성능 좋은 2.5-pro를 우선 사용하고, 안되면 flash로
                                 response = None
-                                error_log = ""
-                                model_list = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+                                # 우선순위: 2.5-pro (최고성능) -> 2.5-flash (빠름) -> 2.0-flash (안정적)
+                                models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+                                last_err = ""
                                 
-                                for m in model_list:
+                                for m_name in models:
                                     try:
-                                        model = genai.GenerativeModel(m)
-                                        response = model.generate_content([vf, "태권도 품새 영상을 2025 KTA 규정으로 분석해줘."])
+                                        model = genai.GenerativeModel(m_name)
+                                        # 프롬프트: 전문적인 태권도 분석
+                                        response = model.generate_content([vf, """
+                                        당신은 세계적인 태권도 품새 국제 심판입니다.
+                                        이 영상을 2025 WT/KTA 경기 규칙에 의거하여 엄격하게 채점하고 분석하세요.
+                                        
+                                        [분석 항목]
+                                        1. 정확도 (4.0 만점 기준 예상 점수): 기본동작, 균형, 절도
+                                        2. 표현력 (6.0 만점 기준 예상 점수): 속도와 힘, 강유와 리듬, 기의 표현
+                                        3. 주요 감점 사항 (0.1 / 0.3 감점 요인 지적)
+                                        4. 총평 및 개선을 위한 원포인트 레슨
+                                        
+                                        출력 형식은 깔끔한 마크다운으로 작성해주세요.
+                                        """])
                                         if response:
-                                            st.success(f"분석 완료 ({m})")
+                                            st.success(f"✅ 분석 성공 ({m_name} 모델 사용)")
                                             break
                                     except Exception as e:
-                                        error_log += f"[{m} 실패: {str(e)}] "
-                                        continue
+                                        last_err = str(e)
+                                        continue 
                                 
                                 if response:
+                                    st.markdown("### 📝 AI 심판 분석 결과")
                                     st.write(response.text)
                                 else:
-                                    st.error(f"분석 실패. 상세 원인: {error_log}")
+                                    st.error(f"모든 AI 모델 연결 실패. 오류: {last_err}")
                                 
                                 tfile.close(); os.unlink(tfile.name)
-                            except Exception as e: st.error(f"업로드 오류: {e}")
+                            except Exception as e: st.error(f"치명적 오류: {e}")
 
             with tab3:
                 if st.button("기록 불러오기"):
