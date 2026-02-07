@@ -10,10 +10,16 @@ import os
 import importlib.metadata
 
 # ==========================================
-# [설정] 구글 시트 ID & API KEY
+# [설정] 구글 시트 ID
 # ==========================================
 SHEET_ID = "1fFNQQgYJfUzV-3qAdaFEeQt1OKBOJibASHQmeoW2nqo"
-GEMINI_API_KEY = "AIzaSyDJCGd0w3NzpXfxoPYR-Ka8cNgtfxSjbIE"
+
+# [수정됨] API 키를 코드에 직접 적지 않고, 비밀 금고(Secrets)에서 가져옵니다.
+# 이렇게 해야 깃허브에 올려도 키가 차단되지 않습니다.
+if "GEMINI" in st.secrets and "api_key" in st.secrets["GEMINI"]:
+    GEMINI_API_KEY = st.secrets["GEMINI"]["api_key"]
+else:
+    GEMINI_API_KEY = None # 키가 없을 경우 처리
 
 st.set_page_config(page_title="로운태권도 통합 관제실", page_icon="🥋", layout="wide")
 
@@ -117,7 +123,6 @@ def register_new_alliance_player(name, team, note):
         sh = client.open_by_key(SHEET_ID)
         ws = sh.worksheet("선수단기록")
         today = get_korea_time().strftime("%Y-%m-%d")
-        # [날짜, 이름, 소속, 훈련구분, 품새, 정확도...] 구조에 맞춰 빈칸 삽입
         ws.append_row([today, name, team, "선수등록", "", 0, 0, 0, 0, 0, "등록", 0, note, ""])
         return True
     except: return False
@@ -222,7 +227,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 8.1 (Data Optimized)**")
+    st.markdown("**System Ver 8.2 (Secure Mode)**")
     
     try:
         ver = importlib.metadata.version("google-generativeai")
@@ -231,23 +236,30 @@ with st.sidebar:
 
     st.write("---")
     
+    # [AI 연결] Secrets에서 가져온 키 사용
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
         except Exception as e:
             st.error(f"키 설정 오류: {e}")
+    else:
+        st.warning("⚠️ AI 키가 설정되지 않았습니다.")
+        st.info("Streamlit Secrets 관리자 페이지에서 'api_key'를 등록해주세요.")
 
     with st.expander("🔑 AI 연결 테스트"):
         if st.button("내 키로 사용 가능한 모델 조회"):
-            try:
-                models = []
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        models.append(m.name)
-                st.success("✅ 연결 성공!")
-                st.code(models)
-            except Exception as e:
-                st.error(f"❌ 연결 실패: {e}")
+            if not GEMINI_API_KEY:
+                st.error("❌ 키가 없습니다.")
+            else:
+                try:
+                    models = []
+                    for m in genai.list_models():
+                        if 'generateContent' in m.supported_generation_methods:
+                            models.append(m.name)
+                    st.success("✅ 연결 성공!")
+                    st.code(models)
+                except Exception as e:
+                    st.error(f"❌ 연결 실패 (403 오류면 키가 차단된 것임): {e}")
 
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -430,13 +442,12 @@ elif menu == "🏆 정권연합선수반":
                         try:
                             client = get_gspread_client()
                             ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
-                            # [날짜, 이름, 소속, 훈련구분, 품새, 정확도, 표현력, ...] 순서로 저장
                             ws.append_row([
                                 datetime.now().strftime("%Y-%m-%d"), 
                                 t_name, 
                                 "정권연합", 
-                                train_type, # D열: 훈련구분
-                                poomsae_name, # E열: 품새명
+                                train_type,
+                                poomsae_name,
                                 acc, pres_total, d01, d03, acc+pres_total, phase, 5, cmt, ""
                             ])
                             st.success("저장 완료")
@@ -454,7 +465,7 @@ elif menu == "🏆 정권연합선수반":
                             ws = client.open_by_key(SHEET_ID).worksheet("선수단기록")
                             ws.append_row([
                                 datetime.now().strftime("%Y-%m-%d"), t_name, "정권연합", 
-                                "영상기록", "", # 훈련구분, 품새는 공란 또는 별도 표기
+                                "영상기록", "", 
                                 0,0,0,0,0, "아카이브", 0, note, lnk
                             ])
                             st.success("저장됨")
