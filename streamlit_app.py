@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 import time
+import re
 
 # ==========================================
 # [설정] 구글 시트 연동
@@ -50,24 +51,25 @@ def load_fast_data():
         sh = client.open_by_key(SHEET_ID)
         worksheet = sh.worksheet("원생명단")
         
-        # API 호출 최소화: 한 번에 다 읽기
         rows = worksheet.get_all_values()
         if len(rows) < 2: return pd.DataFrame()
         
         headers = rows[0]
         data = rows[1:]
         df = pd.DataFrame(data, columns=headers)
+        
+        # 빈 헤더 제거
         df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
         
+        # 휴관생 숨기기
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
             
-        # 장기일정 처리
+        # 장기일정 자동 적용
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
-            updates_needed = [] # 배치 업데이트를 위한 리스트
+            updates_made = False
             
-            # 읽어온 데이터(df) 상에서 로직 판단 (API 호출 X)
             for i, row in df.iterrows():
                 schedule = str(row.get('장기일정', '')).strip()
                 current_status = str(row.get('출석확인', '')).strip()
@@ -79,37 +81,38 @@ def load_fast_data():
                         start_date = start_date.strip()
                         end_date = end_date.strip()
                         
-                        # 행 번호 계산 (헤더 1줄 + 데이터프레임 인덱스 + 1)
-                        # 주의: 필터링 된 df라면 원본 인덱스와 다를 수 있음. 
-                        # 안전을 위해 여기서 gspread find 대신, 이름 매칭 후 업데이트
-                        
                         if today_str > end_date:
-                            # 삭제 대상
-                            cell = worksheet.find(row['이름']) # 이건 어쩔 수 없이 호출 (최소화 필요)
+                            # 기간 지남 -> 삭제
+                            cell = worksheet.find(row['이름'])
                             if cell:
                                 target_col = worksheet.find("장기일정").col
                                 worksheet.update_cell(cell.row, target_col, "")
-                                load_fast_data.clear() # 캐시 초기화
-                                return load_fast_data() # 재귀 호출 (새로고침)
-                                
+                                updates_made = True
                         elif start_date <= today_str <= end_date:
+                            # 기간 내 -> 결석 처리
                             if current_status == '':
                                 cell = worksheet.find(row['이름'])
                                 if cell:
                                     row_idx = cell.row
-                                    # 여러 셀 업데이트를 한번에 하기는 복잡하므로 개별 처리하되
-                                    # 429 에러 방지를 위해 sleep 추가
                                     worksheet.update_cell(row_idx, worksheet.find("출석확인").col, "결석")
                                     worksheet.update_cell(row_idx, worksheet.find("비고").col, reason)
-                                    time.sleep(0.5) # 딜레이
                                     try: worksheet.update_cell(row_idx, worksheet.find("등원확인").col, "결석")
                                     except: pass
                                     try: worksheet.update_cell(row_idx, worksheet.find("하원확인").col, "결석")
                                     except: pass
-                                    
-                                    load_fast_data.clear()
-                                    return load_fast_data()
+                                    updates_made = True
                     except: pass
+            
+            if updates_made:
+                load_fast_data.clear()
+                rows = worksheet.get_all_values()
+                headers = rows[0]
+                data = rows[1:]
+                df = pd.DataFrame(data, columns=headers)
+                df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
+                if '상태' in df.columns:
+                    df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
+
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -170,15 +173,12 @@ def update_check_status(student_name, col_name, status_value):
         else:
             cols_to_update = [col_name]
 
-        # 헤더 한 번만 읽기 (API 절약)
-        headers = worksheet.row_values(1)
-        
-        for target_col_name in cols_to_update:
+        for target_col in cols_to_update:
             try:
-                if target_col_name in headers:
-                    col_num = headers.index(target_col_name) + 1
-                    worksheet.update_cell(row_num, col_num, status_value)
-                    time.sleep(0.5) # 안전 딜레이
+                header_cell = worksheet.find(target_col)
+                col_num = header_cell.col
+                worksheet.update_cell(row_num, col_num, status_value)
+                time.sleep(0.5) 
             except: pass
         load_fast_data.clear() 
     except: pass
@@ -196,22 +196,17 @@ def register_long_term_schedule(student_name, start_date, end_date, reason):
         e_str = end_date.strftime("%Y-%m-%d")
         schedule_str = f"{s_str}~{e_str}:{reason}"
         
-        headers = worksheet.row_values(1)
-        if "장기일정" in headers:
-            col_num = headers.index("장기일정") + 1
-            worksheet.update_cell(row_num, col_num, schedule_str)
+        target_col = worksheet.find("장기일정").col
+        worksheet.update_cell(row_num, target_col, schedule_str)
         
         today_str = get_korea_time().strftime("%Y-%m-%d")
         if s_str <= today_str <= e_str:
-            # 즉시 반영 시 API 최적화
-            col_map = {name: i+1 for i, name in enumerate(headers)}
-            
-            updates = []
-            if "출석확인" in col_map: worksheet.update_cell(row_num, col_map["출석확인"], "결석")
-            if "비고" in col_map: worksheet.update_cell(row_num, col_map["비고"], reason)
-            if "등원확인" in col_map: worksheet.update_cell(row_num, col_map["등원확인"], "결석")
-            if "하원확인" in col_map: worksheet.update_cell(row_num, col_map["하원확인"], "결석")
-            
+            try:
+                worksheet.update_cell(row_num, worksheet.find("출석확인").col, "결석")
+                worksheet.update_cell(row_num, worksheet.find("비고").col, reason)
+                worksheet.update_cell(row_num, worksheet.find("등원확인").col, "결석")
+                worksheet.update_cell(row_num, worksheet.find("하원확인").col, "결석")
+            except: pass
         load_fast_data.clear()
         return True
     except: return False
@@ -269,6 +264,23 @@ def parse_schedule_for_today(raw_text, today_char):
             if today_char in days: return val
     return ""
 
+# [NEW] 생일 파싱 헬퍼 함수
+def extract_birth_month(date_str):
+    # 숫자만 추출
+    digits = re.sub(r'[^0-9]', '', str(date_str))
+    
+    # 8자리 (20150505) -> 5, 6번째가 월
+    if len(digits) == 8:
+        return int(digits[4:6])
+    # 6자리 (150505) -> 3, 4번째가 월
+    elif len(digits) == 6:
+        return int(digits[2:4])
+    # 4자리 (0505) -> 1, 2번째가 월 (흔치 않지만 처리)
+    elif len(digits) == 4:
+        return int(digits[0:2])
+    
+    return 0 # 파싱 불가
+
 df_students = load_fast_data() 
 df_notice = load_slow_data("공지사항")
 df_guide = load_slow_data("기질가이드")
@@ -279,7 +291,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 69.0 (API Safe)**")
+    st.markdown("**System Ver 70.0 (Birth Fix)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -537,10 +549,39 @@ elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사")
     if not df_schedule.empty: st.dataframe(df_schedule, hide_index=True, use_container_width=True)
 
-# 8. 생일
+# 8. 생일 (생일 판독 강화 적용)
 elif menu == "🎂 이달의 생일":
-    st.header("🎂 이달의 생일")
-    # (생략)
+    kst_now = get_korea_time()
+    this_month = kst_now.month
+    st.header("🎂 이달의 생일자")
+    st.subheader(f"{this_month}월의 주인공 🎉")
+    
+    # 생일 컬럼 찾기 (생일, 생년월일 등)
+    birth_cols = [c for c in df_students.columns if '생일' in c or '생년' in c]
+    
+    if birth_cols:
+        target_col = birth_cols[0]
+        # 생일 정보가 있는 행만 필터링
+        df_birth = df_students[df_students[target_col].astype(str).str.strip() != '']
+        
+        # 월 추출
+        df_birth['birth_month'] = df_birth[target_col].apply(extract_birth_month)
+        
+        # 이번달 생일자 필터링
+        b_kids = df_birth[df_birth['birth_month'] == this_month]
+        
+        if not b_kids.empty:
+            st.balloons()
+            # 이름순 정렬
+            b_kids = b_kids.sort_values(by='이름')
+            for i, row in b_kids.iterrows():
+                info_txt = f"🎂 **{row['이름']}** ({row[target_col]})"
+                if '수련부' in row: info_txt += f" - {row['수련부']}부"
+                st.info(info_txt)
+        else:
+            st.write(f"{this_month}월 생일자가 없습니다.")
+    else:
+        st.error(f"엑셀에 '생일' 또는 '생년월일' 컬럼이 없습니다.")
 
 # 9. 관리자
 elif menu == "🔐 관리자 모드":
