@@ -264,22 +264,32 @@ def parse_schedule_for_today(raw_text, today_char):
             if today_char in days: return val
     return ""
 
-# [NEW] 생일 파싱 헬퍼 함수
+# 생일 월 파싱
 def extract_birth_month(date_str):
-    # 숫자만 추출
     digits = re.sub(r'[^0-9]', '', str(date_str))
-    
-    # 8자리 (20150505) -> 5, 6번째가 월
-    if len(digits) == 8:
-        return int(digits[4:6])
-    # 6자리 (150505) -> 3, 4번째가 월
-    elif len(digits) == 6:
-        return int(digits[2:4])
-    # 4자리 (0505) -> 1, 2번째가 월 (흔치 않지만 처리)
-    elif len(digits) == 4:
-        return int(digits[0:2])
-    
-    return 0 # 파싱 불가
+    if len(digits) == 8: return int(digits[4:6])
+    elif len(digits) == 6: return int(digits[2:4])
+    elif len(digits) == 4: return int(digits[0:2])
+    return 0
+
+# [NEW] 생일 일 파싱 (정렬용)
+def extract_birth_day(date_str):
+    digits = re.sub(r'[^0-9]', '', str(date_str))
+    if len(digits) == 8: return int(digits[6:8])
+    elif len(digits) == 6: return int(digits[4:6])
+    elif len(digits) == 4: return int(digits[2:4])
+    return 0
+
+# [NEW] 올해 생일 요일 구하기
+def get_birthday_weekday(month, day):
+    try:
+        current_year = datetime.now().year
+        # 올해의 해당 월/일 날짜 객체 생성
+        date_obj = datetime(current_year, int(month), int(day))
+        weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
+        return weekdays[date_obj.weekday()]
+    except:
+        return ""
 
 df_students = load_fast_data() 
 df_notice = load_slow_data("공지사항")
@@ -291,7 +301,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 70.0 (Birth Fix)**")
+    st.markdown("**System Ver 71.0 (Birth Sort)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -549,39 +559,41 @@ elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사")
     if not df_schedule.empty: st.dataframe(df_schedule, hide_index=True, use_container_width=True)
 
-# 8. 생일 (생일 판독 강화 적용)
+# 8. 생일 (날짜순 정렬 + 요일 추가)
 elif menu == "🎂 이달의 생일":
     kst_now = get_korea_time()
     this_month = kst_now.month
     st.header("🎂 이달의 생일자")
     st.subheader(f"{this_month}월의 주인공 🎉")
     
-    # 생일 컬럼 찾기 (생일, 생년월일 등)
     birth_cols = [c for c in df_students.columns if '생일' in c or '생년' in c]
-    
     if birth_cols:
         target_col = birth_cols[0]
-        # 생일 정보가 있는 행만 필터링
         df_birth = df_students[df_students[target_col].astype(str).str.strip() != '']
         
-        # 월 추출
+        # 월, 일 추출
         df_birth['birth_month'] = df_birth[target_col].apply(extract_birth_month)
+        df_birth['birth_day'] = df_birth[target_col].apply(extract_birth_day)
         
         # 이번달 생일자 필터링
         b_kids = df_birth[df_birth['birth_month'] == this_month]
         
         if not b_kids.empty:
             st.balloons()
-            # 이름순 정렬
-            b_kids = b_kids.sort_values(by='이름')
+            # [NEW] 날짜순(일) -> 이름순 정렬
+            b_kids = b_kids.sort_values(by=['birth_day', '이름'])
+            
             for i, row in b_kids.iterrows():
-                info_txt = f"🎂 **{row['이름']}** ({row[target_col]})"
-                if '수련부' in row: info_txt += f" - {row['수련부']}부"
+                # 요일 구하기
+                w_day = get_birthday_weekday(this_month, row['birth_day'])
+                
+                info_txt = f"🎂 **{row['birth_day']}일 {w_day} - {row['이름']}**"
+                if '수련부' in row: info_txt += f" ({row['수련부']}부)"
                 st.info(info_txt)
         else:
             st.write(f"{this_month}월 생일자가 없습니다.")
     else:
-        st.error(f"엑셀에 '생일' 또는 '생년월일' 컬럼이 없습니다.")
+        st.error(f"엑셀에 '생일' 컬럼이 없습니다.")
 
 # 9. 관리자
 elif menu == "🔐 관리자 모드":
