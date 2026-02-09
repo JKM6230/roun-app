@@ -150,6 +150,18 @@ def add_consultation_log(student_name, content):
         return True
     except: return False
 
+# [NEW] 공지사항 추가 함수
+def add_notice_to_sheet(content):
+    client = get_gspread_client()
+    try:
+        sh = client.open_by_key(SHEET_ID)
+        ws = sh.worksheet("공지사항")
+        today = get_korea_time().strftime("%Y-%m-%d")
+        # A열: 날짜, B열: 내용 이라고 가정하고 추가
+        ws.append_row([today, content])
+        return True
+    except: return False
+
 def update_check_status(student_name, col_name, status_value):
     client = get_gspread_client()
     if not client: return
@@ -292,7 +304,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 72.0 (Home Birth)**")
+    st.markdown("**System Ver 73.0 (Admin Notice)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -312,24 +324,18 @@ if menu == "🏠 홈 대시보드":
     st.markdown(f"<div style='text-align: right; font-size: 1.5em; font-weight: bold; margin-bottom: 20px;'>📅 {now.strftime('%m월 %d일')} {weekdays[now.weekday()]}</div>", unsafe_allow_html=True)
     st.header("📢 오늘의 작전 브리핑")
     
-    # [NEW] 오늘 생일자 확인 로직
     birth_cols = [c for c in df_students.columns if '생일' in c or '생년' in c]
     if birth_cols:
         target_col = birth_cols[0]
-        # 월, 일 추출 후 오늘 날짜와 비교
         today_month = now.month
         today_day = now.day
-        
-        # 생일 정보가 있는 학생들 중에서 필터링
         today_birthdays = df_students[
             (df_students[target_col].apply(extract_birth_month) == today_month) &
             (df_students[target_col].apply(extract_birth_day) == today_day)
         ]
-        
         if not today_birthdays.empty:
             names = today_birthdays['이름'].tolist()
-            names_str = ", ".join(names)
-            st.success(f"🎂 **오늘 생일:** {names_str} 🎉 축하해주세요!")
+            st.success(f"🎂 **오늘 생일:** {', '.join(names)} 🎉 축하해주세요!")
             st.balloons()
 
     if not df_notice.empty and len(df_notice.columns) >= 2:
@@ -365,7 +371,6 @@ elif menu == "🚍 차량 운행표":
             if col in working_df.columns: working_df[col] = working_df[col].apply(lambda x: parse_schedule_for_today(x, today_char))
         if '차량이용여부' in working_df.columns: working_df = working_df[working_df['차량이용여부'].fillna('O').astype(str).str.contains('O|이용|사용|오|ㅇ', case=False)]
         
-        # 등원요일 필터링
         if '등원요일' in working_df.columns:
             working_df = working_df[working_df['등원요일'].astype(str).str.strip().eq('') | working_df['등원요일'].astype(str).str.contains(today_char)]
 
@@ -399,7 +404,6 @@ elif menu == "🚍 차량 운행표":
                 st.markdown(f"<div style='background-color:{bg};padding:15px;border-left:6px solid {border};border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:5px;color:black !important;'><div style='font-size:1.2rem;font-weight:bold;color:black;margin-bottom:5px;'>{icon} {item['name']} ({item['type']})</div><div style='font-size:1rem;color:#333;'>📍 {item['loc']} {status_html}</div></div>", unsafe_allow_html=True)
                 
                 c1, c2 = st.columns([1, 1])
-                key_base = f"{idx}_{item['name']}_{item['type']}"
                 with c1:
                     if item['status'] == '탑승':
                         if st.button("취소", key=f"u_{key_base}"): update_check_status(item['name'], item['check_col'], ''); st.rerun()
@@ -570,7 +574,7 @@ elif menu == "📈 승급심사 관리":
     st.header("📈 승급심사")
     if not df_schedule.empty: st.dataframe(df_schedule, hide_index=True, use_container_width=True)
 
-# 8. 생일 (날짜순 정렬 + 요일 추가)
+# 8. 생일
 elif menu == "🎂 이달의 생일":
     kst_now = get_korea_time()
     this_month = kst_now.month
@@ -581,61 +585,83 @@ elif menu == "🎂 이달의 생일":
     if birth_cols:
         target_col = birth_cols[0]
         df_birth = df_students[df_students[target_col].astype(str).str.strip() != '']
-        
-        # 월, 일 추출
         df_birth['birth_month'] = df_birth[target_col].apply(extract_birth_month)
         df_birth['birth_day'] = df_birth[target_col].apply(extract_birth_day)
         
-        # 이번달 생일자 필터링
         b_kids = df_birth[df_birth['birth_month'] == this_month]
-        
         if not b_kids.empty:
             st.balloons()
-            # 날짜순(일) -> 이름순 정렬
             b_kids = b_kids.sort_values(by=['birth_day', '이름'])
-            
             for i, row in b_kids.iterrows():
-                # 요일 구하기
                 w_day = get_birthday_weekday(this_month, row['birth_day'])
-                
                 info_txt = f"🎂 **{row['birth_day']}일 {w_day} - {row['이름']}**"
                 if '수련부' in row: info_txt += f" ({row['수련부']}부)"
                 st.info(info_txt)
-        else:
-            st.write(f"{this_month}월 생일자가 없습니다.")
-    else:
-        st.error(f"엑셀에 '생일' 컬럼이 없습니다.")
+        else: st.write(f"{this_month}월 생일자가 없습니다.")
+    else: st.error(f"엑셀에 '생일' 컬럼이 없습니다.")
 
-# 9. 관리자
+# 9. 관리자 (개편됨)
 elif menu == "🔐 관리자 모드":
     st.header("관리자")
     if st.text_input("PW", type="password") == "0577":
         st.success("승인됨")
-        st.warning("⚠️ 하루 마감 시 '월간출석부'에 기록되고 초기화됩니다.")
-        if st.button("🔥 마감 및 저장"):
-            with st.spinner("저장 중..."):
-                ok, msg = archive_daily_attendance()
-            if ok:
-                st.success(msg)
-                with st.spinner("초기화 중..."):
-                    try:
-                        c = get_gspread_client()
-                        ws = c.open_by_key(SHEET_ID).worksheet("원생명단")
-                        
-                        # [최적화] API 호출 1회로 줄임 (batch_clear)
-                        headers = ws.row_values(1)
-                        ranges = []
-                        for col_name in ["등원확인", "하원확인", "출석확인", "비고"]:
-                            if col_name in headers:
-                                col_idx = headers.index(col_name) + 1
-                                col_letter = gspread.utils.rowcol_to_a1(1, col_idx).replace('1', '')
-                                ranges.append(f"{col_letter}2:{col_letter}1000")
-                        
-                        if ranges: 
-                            ws.batch_clear(ranges)
-                            st.success("완료! 👋")
-                            load_fast_data.clear()
-                            time.sleep(2)
-                            st.rerun()
-                    except: st.error("초기화 실패")
-            else: st.error(msg)
+        st.markdown("---")
+        
+        # 탭 분리
+        tab1, tab2 = st.tabs(["📢 공지사항 등록", "🔥 하루 마감"])
+        
+        with tab1:
+            st.subheader("새로운 공지사항 등록")
+            st.info("💡 테마를 선택하고 내용을 입력하면, 홈 화면에 색상 카드로 표시됩니다.")
+            
+            # 테마 선택
+            notice_theme = st.radio("테마 선택", ["일반(초록)", "상담(빨강)", "도복(파랑)", "심사(노랑)"], horizontal=True)
+            notice_content = st.text_area("공지 내용 입력", height=150)
+            
+            if st.button("공지 올리기"):
+                if notice_content:
+                    # 말머리 자동 생성
+                    prefix = ""
+                    if "상담" in notice_theme: prefix = "[상담] "
+                    elif "도복" in notice_theme: prefix = "[도복] "
+                    elif "심사" in notice_theme: prefix = "[심사] "
+                    
+                    final_msg = prefix + notice_content
+                    
+                    if add_notice_to_sheet(final_msg):
+                        st.success("공지가 등록되었습니다! (홈 화면에서 확인하세요)")
+                        load_slow_data.clear() # 캐시 초기화
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("등록 실패: '공지사항' 시트가 있는지 확인해주세요.")
+                else:
+                    st.warning("내용을 입력해주세요.")
+                    
+        with tab2:
+            st.subheader("하루 마감 (출석부 저장 및 초기화)")
+            st.warning("⚠️ 주의: 이 버튼을 누르면 오늘의 출석 기록이 '월간출석부'로 넘어가고, 현재 화면은 초기화됩니다.")
+            if st.button("🔥 마감 및 저장"):
+                with st.spinner("저장 중..."):
+                    ok, msg = archive_daily_attendance()
+                if ok:
+                    st.success(msg)
+                    with st.spinner("초기화 중..."):
+                        try:
+                            c = get_gspread_client()
+                            ws = c.open_by_key(SHEET_ID).worksheet("원생명단")
+                            headers = ws.row_values(1)
+                            ranges = []
+                            for col_name in ["등원확인", "하원확인", "출석확인", "비고"]:
+                                if col_name in headers:
+                                    col_idx = headers.index(col_name) + 1
+                                    col_letter = gspread.utils.rowcol_to_a1(1, col_idx).replace('1', '')
+                                    ranges.append(f"{col_letter}2:{col_letter}1000")
+                            if ranges: 
+                                ws.batch_clear(ranges)
+                                st.success("완료! 👋")
+                                load_fast_data.clear()
+                                time.sleep(2)
+                                st.rerun()
+                        except: st.error("초기화 실패")
+                else: st.error(msg)
