@@ -58,14 +58,11 @@ def load_fast_data():
         data = rows[1:]
         df = pd.DataFrame(data, columns=headers)
         
-        # 빈 헤더 제거
         df = df.loc[:, ~df.columns.str.match(r'^\s*$')]
         
-        # 휴관생 숨기기
         if '상태' in df.columns:
             df = df[~df['상태'].str.contains('휴관|퇴원|중단|쉬는', case=False, na=False)]
             
-        # 장기일정 자동 적용
         if '장기일정' in df.columns:
             today_str = get_korea_time().strftime("%Y-%m-%d")
             updates_made = False
@@ -82,14 +79,12 @@ def load_fast_data():
                         end_date = end_date.strip()
                         
                         if today_str > end_date:
-                            # 기간 지남 -> 삭제
                             cell = worksheet.find(row['이름'])
                             if cell:
                                 target_col = worksheet.find("장기일정").col
                                 worksheet.update_cell(cell.row, target_col, "")
                                 updates_made = True
                         elif start_date <= today_str <= end_date:
-                            # 기간 내 -> 결석 처리
                             if current_status == '':
                                 cell = worksheet.find(row['이름'])
                                 if cell:
@@ -264,7 +259,6 @@ def parse_schedule_for_today(raw_text, today_char):
             if today_char in days: return val
     return ""
 
-# 생일 월 파싱
 def extract_birth_month(date_str):
     digits = re.sub(r'[^0-9]', '', str(date_str))
     if len(digits) == 8: return int(digits[4:6])
@@ -272,7 +266,6 @@ def extract_birth_month(date_str):
     elif len(digits) == 4: return int(digits[0:2])
     return 0
 
-# [NEW] 생일 일 파싱 (정렬용)
 def extract_birth_day(date_str):
     digits = re.sub(r'[^0-9]', '', str(date_str))
     if len(digits) == 8: return int(digits[6:8])
@@ -280,11 +273,9 @@ def extract_birth_day(date_str):
     elif len(digits) == 4: return int(digits[2:4])
     return 0
 
-# [NEW] 올해 생일 요일 구하기
 def get_birthday_weekday(month, day):
     try:
         current_year = datetime.now().year
-        # 올해의 해당 월/일 날짜 객체 생성
         date_obj = datetime(current_year, int(month), int(day))
         weekdays = ["(월)", "(화)", "(수)", "(목)", "(금)", "(토)", "(일)"]
         return weekdays[date_obj.weekday()]
@@ -301,7 +292,7 @@ df_schedule = load_slow_data("심사일정")
 # ==========================================
 with st.sidebar:
     st.title("🥋 로운태권도")
-    st.markdown("**System Ver 71.0 (Birth Sort)**")
+    st.markdown("**System Ver 72.0 (Home Birth)**")
     st.write("---")
     auto_refresh = st.toggle("실시간 모드 (10초)", value=False)
     if auto_refresh:
@@ -321,6 +312,26 @@ if menu == "🏠 홈 대시보드":
     st.markdown(f"<div style='text-align: right; font-size: 1.5em; font-weight: bold; margin-bottom: 20px;'>📅 {now.strftime('%m월 %d일')} {weekdays[now.weekday()]}</div>", unsafe_allow_html=True)
     st.header("📢 오늘의 작전 브리핑")
     
+    # [NEW] 오늘 생일자 확인 로직
+    birth_cols = [c for c in df_students.columns if '생일' in c or '생년' in c]
+    if birth_cols:
+        target_col = birth_cols[0]
+        # 월, 일 추출 후 오늘 날짜와 비교
+        today_month = now.month
+        today_day = now.day
+        
+        # 생일 정보가 있는 학생들 중에서 필터링
+        today_birthdays = df_students[
+            (df_students[target_col].apply(extract_birth_month) == today_month) &
+            (df_students[target_col].apply(extract_birth_day) == today_day)
+        ]
+        
+        if not today_birthdays.empty:
+            names = today_birthdays['이름'].tolist()
+            names_str = ", ".join(names)
+            st.success(f"🎂 **오늘 생일:** {names_str} 🎉 축하해주세요!")
+            st.balloons()
+
     if not df_notice.empty and len(df_notice.columns) >= 2:
         recent_notices = df_notice.tail(10)
         for i, row in recent_notices.iloc[::-1].iterrows():
@@ -580,7 +591,7 @@ elif menu == "🎂 이달의 생일":
         
         if not b_kids.empty:
             st.balloons()
-            # [NEW] 날짜순(일) -> 이름순 정렬
+            # 날짜순(일) -> 이름순 정렬
             b_kids = b_kids.sort_values(by=['birth_day', '이름'])
             
             for i, row in b_kids.iterrows():
